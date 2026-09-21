@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<!-- v6.69: TRE FIX SU GEOREFERENZIAZIONE E MERGE ELETTRICO DEL CALCOLO MISTO (C-x). (1) ORIGINE CANONICA: il frame del misto ha origine in results[0].o (baricentro della prima area del primo gruppo), ma nel finally activeArea viene ripristinata alla scelta utente e dlKML/dlDXF/cmpBuildDXF/report ricalcolavano l'origine da areas[activeArea]: TUTTO l'impianto usciva traslato del vettore fra i baricentri (caso reale: 974 m E / 848 m N = 1290 m). Ora ogni percorso di calcolo timbra res._originLL (e window._layoutOriginLL per il render 3D) e gli export leggono _slpOriginLL(res). (2) DOPPIO SHIFT DEI PERIMETRI: _slpShiftRes traslava già rawPoly/netPoly e il blocco CONTRATTO DATI CANONICO ri-applicava __mgGx/__mgGy sul fallback r.rawPoly (sempre usato: un gruppo mono-area non popola _allRawPolys), quindi il perimetro del secondo gruppo usciva a 2x offset in DXF/KML. In più i poligoni geografici venivano traslati con l'offset RUOTATO: ora _slpShiftRes accetta gx,gy separati da dx,dy. (3) RE-INDICIZZAZIONE ELETTRICA: il merge misto concatenava inverters/cableDC/cableAC/cableMT senza rimappare cabIdx/invIdx/indici struttura e stringa, quindi gli inverter dei gruppi i>0 puntavano alle cabine del PRIMO gruppo (linee AC fra campi diversi sul planimetrico, colonna Cabina errata in report/Excel, id INV e S duplicati, CAB duplicate in KML). Ora offset _si0/_ci0/_ii0/_st0 come in runMultiAreaCalc, id inverter prefissati col label del gruppo, tag _areaIdx/_grpIdx su strutture, cabine e inverter, cabine rinumerate CAB 1..N e cabinN/totalCabinArea allineati alle cabine effettivamente posizionate (con avviso nel log diagnostico se il motore ne scarta). -->
 <!-- v6.68: F2.1 — ELETTRICO DEDICATO PER SOTTOCAMPO. Ripartizione POSIZIONALE (point-in-polygon sui perimetri globali delle aree, stesso frame del merge) di strutture, inverter e cabine sui sottocampi: per ogni S-x vengono calcolati kWp, moduli, N inverter, ΣPac, cabine e ΣkVA, quindi Pn CEI = min(ΣPac, Pdc, ΣkVA cabine), rapporto DC/AC ed esito CEI 0-16 per sottocampo. La TRATTA DI CONNESSIONE ALLA RETE diventa UNA PER SOTTOCAMPO nel riepilogo cavi, con la distanza presa dallo snapshot Connessione del sottocampo (il sottocampo implicito/residuo usa i valori correnti della UI) e destinazione "PDC S-x → Punto consegna MT/AT". Il breakdown mostra la tabella completa per sottocampo con verifica CEI; l'esito del calcolo riporta la Pn di ciascuno; nel log la riga "F2 elettrico" riepiloga Pn/inverter/cabine/km per S-x. LIMITI DICHIARATI (F2.2): sezione del cavo tratta rete = dimensionamento globale (ricalcolo I→sezione per sottocampo in F2.2); cabine assegnate per posizione (motore cabine subfield-aware, mai condivise tra sottocampi, in F2.2); fisso+tracker misti bloccati finché la producibilità non gestisce N serie PVGIS pesate. -->
 <!-- v6.67: TRE CORREZIONI DA COLLAUDO v6.66 (rotazione RISOLTA e confermata dal log: assi −33°/−42°/+51° reali). (A) TIPO IMPIANTO DETERMINISTICO: l'autosave catturava anche __mount — cliccando TRACKER per preparare la config successiva, la config ATTIVA (C-1 Fisso) se lo assorbiva silenziosamente: da qui "C-1 fisso mostrato tracker" e il mancato blocco fisso+tracker. Ora il tipo si fissa alla CREAZIONE e l'autosave lo preserva sempre; per cambiare tipo a una configurazione: elimina e ricrea (attivandola, la UI si riallinea comunque al suo tipo). (B) Header "⚙ TIPO DI IMPIANTO" duplicato sulla stessa riga (residuo del taglio HTML v6.66) rimosso. (C) DC/AC DEL MISTO: _pacTot veniva inizializzato leggendo results[0] GIÀ MUTATO dalla somma degli inverter — i gruppi si raddoppiavano (36×330 invece di 22×330 → 0.665 nel report con alert spurio "inverter sottoutilizzato"): init spostata prima della somma, ora DC/AC = kWp/ΣPac reale (1.089 sul caso di prova). NOTE per F3: nel report misto i Parametri di Progetto e le etichette inverter (INV vs A1_INV, dove A1 è la prima area del GRUPPO) vanno declinati per configurazione. -->
 <!-- v6.66: FIX RADICE DEL MISTO + NUOVO MODELLO UX (dal log diagnostico di F.M.). (1) ROTAZIONE E NUMERI: il log ha inchiodato il bug — nel calcolo misto tutti i perimetri risultavano 373×137m asse 51° (tre CLONI dell'area attiva A3) e i moduli di C-2 erano esattamente 2× quelli di C-1: i calculator leggono il poligono dalla GLOBALE `poly` (alias UI, riga 35) che i pass non aggiornavano — ogni pass calcolava layout, kWp e perimetri sull'area attiva dell'utente. Ora ogni pass allinea poly all'area primaria del gruppo (con ripristino a fine corsa): geometrie E numeri del misto ora sono per-area reali. Nel multi classico (conf. spente) tutto era già corretto, come confermato dal log. (2) NIENTE PIÙ FLAG: box unico COLLASSABILE "Configurazione Mista e Sottocampi", visibile con ≥2 aree; il motore è attivo appena esiste almeno una configurazione (zero configurazioni = impianto classico, parametri liberi — eliminata l'ambiguità "configurazione spenta su impianto misto"); un sottocampo creato va in rete da solo e le aree rimanenti formano automaticamente l'altro sottocampo al Calcola; al caricamento di un progetto salvato i gruppi presenti riattivano il motore da soli (niente più "salvato acceso, riaperto spento"). (3) LOG: aggiunto 📋 Copia (appunti) accanto a Scarica, che ora ha gestione errori — su Android il download da blob può fallire. -->
@@ -56,8 +57,8 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="build-version" content="v6.68">
-<title>SolarLayout Pro v6.68 (PROVA — accesso aperto)</title>
+<meta name="build-version" content="v6.69">
+<title>SolarLayout Pro v6.69 (PROVA — accesso aperto)</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;900&family=JetBrains+Mono:wght@400;600&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -513,7 +514,7 @@ document.addEventListener('DOMContentLoaded',function(){
 </script>
 
 <div class="hdr">
-  <div class="logo">⚡ SolarLayout<em>GROUND-MOUNT PV CALCULATOR v6.68</em></div>
+  <div class="logo">⚡ SolarLayout<em>GROUND-MOUNT PV CALCULATOR v6.69</em></div>
   <button id="themeToggle" onclick="toggleTheme()">🌙 Notte</button>
   <button id="authLogoutBtn" onclick="if(window.netlifyIdentity)netlifyIdentity.logout();" title="Esci dall'account" style="margin-left:6px">🚪 Esci</button>
   <div class="chips">
@@ -2398,6 +2399,8 @@ async function runMultiAreaCalc(primaryRes, mountMode){
       window._pendingCrossAlerts = allAlerts;
     }
   }
+  // v6.69: origine canonica del frame multi-area per gli export
+  try{ merged._originLL={lat:globalOrig.lat, lon:globalOrig.lon}; }catch(_){}
   return merged;
 }
 
@@ -3160,6 +3163,23 @@ function mergeAreaResults(results){
 // ══════════════════════════════════════════════════════
 //  GEOMETRY
 // ══════════════════════════════════════════════════════
+// v6.69: ORIGINE CANONICA del frame di layout (baricentro usato DAL CALCOLO).
+// Mono/multi-area -> baricentro dell'area attiva al momento del calcolo;
+// misto (C-x) -> baricentro della prima area del primo gruppo (results[0].o).
+// Gli export DEVONO usare questa e non areas[activeArea]: nel misto activeArea
+// viene ripristinata all'area scelta dall'utente e la conversione XY->geo
+// traslava l'intero impianto della distanza fra i due baricentri.
+function _slpOriginLL(r){
+  const _r=(r||((typeof res!=='undefined')?res:null));
+  if(_r&&_r._originLL&&isFinite(_r._originLL.lat)&&isFinite(_r._originLL.lon))
+    return {lat:+_r._originLL.lat, lon:+_r._originLL.lon};
+  if(window._layoutOriginLL&&isFinite(window._layoutOriginLL.lat)&&isFinite(window._layoutOriginLL.lon))
+    return {lat:+window._layoutOriginLL.lat, lon:+window._layoutOriginLL.lon};
+  const _p=((typeof activeArea!=='undefined')&&activeArea>=0&&areas[activeArea]&&areas[activeArea].pts&&areas[activeArea].pts.length>=3)
+    ? areas[activeArea].pts
+    : ((areas.find(a=>a.pts&&a.pts.length>=3)||{}).pts||[]);
+  return _p.length?toXY(_p).o:{lat:0,lon:0};
+}
 function toXY(ll){const lat0=ll.reduce((s,p)=>s+p.lat,0)/ll.length,lon0=ll.reduce((s,p)=>s+p.lon,0)/ll.length,cosL=Math.cos(lat0*Math.PI/180);return{o:{lat:lat0,lon:lon0},pts:ll.map(p=>({x:(p.lon-lon0)*cosL*111320,y:(p.lat-lat0)*110540}))};}
 function area2D(p){let a=0,n=p.length;for(let i=0;i<n;i++){const j=(i+1)%n;a+=p[i].x*p[j].y-p[j].x*p[i].y;}return Math.abs(a)/2;}
 function centroid2D(p){return{x:p.reduce((s,q)=>s+q.x,0)/p.length,y:p.reduce((s,q)=>s+q.y,0)/p.length};}
@@ -4437,16 +4457,25 @@ function _slpPolyDiag(polys){
     return 'P'+(i+1)+': asse '+ang+'\u00B0 \u00B7 '+long.toFixed(0)+'\u00D7'+short.toFixed(0)+'m \u00B7 c('+cx.toFixed(0)+','+cy.toFixed(0)+')';
   }).join('  |  ');
 }
-function _slpShiftRes(r, dx, dy){
-  if(!r||(!dx&&!dy)) return r;
+function _slpShiftRes(r, dx, dy, gx, gy){
+  // v6.69: gx/gy = offset GEOGRAFICO (non ruotato) per rawPoly/netPoly.
+  // Se omessi ricadono su dx/dy (coincidono solo con azimut 0).
+  if(gx===undefined) gx=dx;
+  if(gy===undefined) gy=dy;
+  if(!r||(!dx&&!dy&&!gx&&!gy)) return r;
   const sp=(pts)=>Array.isArray(pts)?pts.map(p=>({...p,x:(p.x||0)+dx,y:(p.y||0)+dy})):pts;
+  const spG=(pts)=>Array.isArray(pts)?pts.map(p=>({...p,x:(p.x||0)+gx,y:(p.y||0)+gy})):pts;
   (r.structures||[]).forEach(st=>{ st.cx+=dx; st.cy+=dy; if(st.rx!==undefined)st.rx+=dx; if(st.ry!==undefined)st.ry+=dy; });
   (r.cabins||[]).forEach(c=>{ c.cx+=dx; c.cy+=dy; if(c.rx!==undefined)c.rx+=dx; if(c.ry!==undefined)c.ry+=dy; });
   (r.roads||[]).forEach(rd=>{ if(rd.x0!==undefined)rd.x0+=dx; if(rd.x1!==undefined)rd.x1+=dx; if(rd.cx!==undefined)rd.cx+=dx;
     if(rd._minX!==undefined){rd._minX+=dx;rd._maxX+=dx;rd._minY+=dy;rd._maxY+=dy;} });
   (r.roadsEW||[]).forEach(rd=>{ if(rd.y0!==undefined)rd.y0+=dy; if(rd.y1!==undefined)rd.y1+=dy; if(rd.cy!==undefined)rd.cy+=dy;
     if(rd._minX!==undefined){rd._minX+=dx;rd._maxX+=dx;rd._minY+=dy;rd._maxY+=dy;} });
-  ['rotPoly','netPoly','rawPoly'].forEach(k=>{ if(Array.isArray(r[k])) r[k]=sp(r[k]); });
+  if(Array.isArray(r.rotPoly)) r.rotPoly=sp(r.rotPoly);
+  // v6.69: raw/net vivono nello spazio GEOGRAFICO -> offset geografico
+  ['netPoly','rawPoly'].forEach(k=>{ if(Array.isArray(r[k])) r[k]=spG(r[k]); });
+  if(Array.isArray(r._allRawPolys)) r._allRawPolys=r._allRawPolys.map(pp=>spG(pp));
+  if(Array.isArray(r._allNetPolys)) r._allNetPolys=r._allNetPolys.map(pp=>spG(pp));
   if(Array.isArray(r._allRotPolys)) r._allRotPolys=r._allRotPolys.map(pp=>sp(pp));
   if(Array.isArray(r._allRawRotPolys)) r._allRawRotPolys=r._allRawRotPolys.map(pp=>sp(pp));
   if(Array.isArray(r._rotHoles)) r._rotHoles=r._rotHoles.map(h=>sp(h));
@@ -4614,11 +4643,41 @@ window.calculateMixedRun=async function(){
     const mix={groups:[]};
     for(let i=0;i<results.length;i++){
       const {g,r,o}=results[i];
+      // v6.69: tag di appartenenza su TUTTI i gruppi (serve al guard cross-area
+      // del planimetrico e alla diagnostica) + id inverter con prefisso gruppo
+      const _ai=(g.areas&&g.areas.length)?g.areas[0]:i;
+      (r.structures||[]).forEach(st=>{ if(st._areaIdx===undefined) st._areaIdx=_ai; st._grpIdx=i; });
+      (r.cabins||[]).forEach(cb=>{ if(cb._areaIdx===undefined) cb._areaIdx=_ai; cb._grpIdx=i; });
+      if(r.elec){
+        const _pfx=(g.label||('C-'+(i+1)))+'_';
+        (r.elec.inverters||[]).forEach(v=>{
+          if(v._areaIdx===undefined) v._areaIdx=_ai;
+          v._grpIdx=i;
+          if(results.length>1 && v.id && String(v.id).indexOf(_pfx)!==0) v.id=_pfx+v.id;
+        });
+      }
       if(i>0){
         const gx=(o.lon-o0.lon)*cosL*111320, gy=(o.lat-o0.lat)*110540;
         const dx=gx*Math.cos(azR)+gy*Math.sin(azR), dy=-gx*Math.sin(azR)+gy*Math.cos(azR);
         r.__mgGx=gx; r.__mgGy=gy;   // offset geografici per i raw/net (v6.64)
-        _slpShiftRes(r,dx,dy);
+        _slpShiftRes(r,dx,dy,gx,gy);
+        // v6.69 FIX RADICE: re-indicizzazione elettrica nel frame merged (come
+        // runMultiAreaCalc). Senza questo gli inverter dei gruppi i>0 tenevano
+        // cabIdx/invIdx LOCALI e puntavano alle cabine del PRIMO gruppo: linee
+        // AC fra campi diversi sul planimetrico, colonna "Cabina" errata in
+        // report/Excel, id stringa duplicati.
+        const _si0=(M.structures||[]).length, _ci0=(M.cabins||[]).length,
+              _ii0=((M.elec&&M.elec.inverters)||[]).length, _st0=(M.numStr||0);
+        if(r.elec){
+          (r.elec.inverters||[]).forEach(inv=>{
+            inv.cabIdx=(inv.cabIdx||0)+_ci0;
+            if(Array.isArray(inv.structures)) inv.structures=inv.structures.map(x=>x+_si0);
+            if(Array.isArray(inv.strings))    inv.strings=inv.strings.map(x=>x+_st0);
+          });
+          (r.elec.cableDC||[]).forEach(c=>{ if(typeof c.si==='number') c.si+=_si0; if(typeof c.stIdx==='number') c.stIdx+=_si0; if(typeof c.invIdx==='number') c.invIdx+=_ii0; });
+          (r.elec.cableAC||[]).forEach(c=>{ if(typeof c.invIdx==='number') c.invIdx+=_ii0; c.cabIdx=(c.cabIdx||0)+_ci0; });
+          (r.elec.cableMT||[]).forEach(c=>{ if(typeof c.cabIdx==='number') c.cabIdx+=_ci0; });
+        }
         ['structures','cabins','roads','roadsEW'].forEach(k=>{ if(Array.isArray(r[k])&&Array.isArray(M[k])) M[k]=M[k].concat(r[k]); });
         ['totalMod','kWp','numStr','remMod','totalArea','netArea','netFieldArea','totalRoadArea','totalCabinArea','cabinN'].forEach(k=>{ if(typeof r[k]==='number') M[k]=(M[k]||0)+r[k]; });
         M.minX=Math.min(M.minX,r.minX); M.maxX=Math.max(M.maxX,r.maxX);
@@ -4651,8 +4710,10 @@ window.calculateMixedRun=async function(){
     try{
       const _rawG=[], _netG=[], _rotG=[], _holesG=[];
       results.forEach(({r})=>{
-        const gx=r.__mgGx||0, gy=r.__mgGy||0;
-        const shG=(pp)=>(pp||[]).map(p=>({x:p.x+gx,y:p.y+gy}));
+        // v6.69 FIX: i poligoni sono GIA' traslati da _slpShiftRes (raw/net con
+        // offset geografico). Ri-applicare __mgGx/__mgGy raddoppiava l'offset
+        // del 2o gruppo: perimetro CONFINE a 2x in DXF/KML.
+        const shG=(pp)=>(pp||[]).map(p=>({x:p.x,y:p.y}));
         ((r._allRawPolys&&r._allRawPolys.length)?r._allRawPolys:(r.rawPoly?[r.rawPoly]:[])).forEach(p=>_rawG.push(shG(p)));
         ((r._allNetPolys&&r._allNetPolys.length)?r._allNetPolys:(r.netPoly?[r.netPoly]:[])).forEach(p=>_netG.push(shG(p)));
         ((r._allRotPolys&&r._allRotPolys.length)?r._allRotPolys:(r.rotPoly?[r.rotPoly]:[])).forEach(p=>_rotG.push(p));
@@ -4687,6 +4748,21 @@ window.calculateMixedRun=async function(){
     }catch(_e){ console.warn('[summary fuse]',_e); }
     if(M.elec&&M.elec._pacTot){ M.elec.dcac_ratio=M.kWp/Math.max(1,M.elec._pacTot); M.elec.overplanting_pct=(M.elec.dcac_ratio*100).toFixed(1); M.elec.cei016_ok=M.elec.dcac_ratio<=1.5; }
     M.kWpHa=M.kWp/((M.totalArea||1)/1e4);
+    // v6.69: ORIGINE CANONICA del frame merged. activeArea viene ripristinata
+    // nel finally e NON coincide con o0: senza questo timbro gli export
+    // traslavano l'intero impianto del vettore fra i due baricentri.
+    M._originLL={lat:o0.lat, lon:o0.lon};
+    window._layoutOriginLL={lat:o0.lat, lon:o0.lon};
+    // v6.69: cabine — rinumerazione globale CAB 1..N e conteggio allineato a
+    // quelle EFFETTIVAMENTE posizionate (come runMultiAreaCalc)
+    try{
+      const _cabsM=M.cabins||[], _cabReq=M.cabinN||0;
+      _cabsM.forEach((cb,ci)=>{ cb.label='CAB '+(ci+1); });
+      if(M.elec&&Array.isArray(M.elec.cableMT)) M.elec.cableMT.forEach(c=>{ const cb=_cabsM[c.cabIdx]; if(cb&&c.cabLabel!==undefined) c.cabLabel=cb.label; });
+      M.cabinN=_cabsM.length;
+      M.totalCabinArea=_cabsM.reduce((sA,c)=>sA+((c.w&&c.d)?c.w*c.d:(M.cabinArea||0)),0);
+      if(_cabReq>_cabsM.length){ try{ _slpLogAdd('config','\u26a0\ufe0f cabine richieste '+_cabReq+' ma posizionate '+_cabsM.length+' (zone scartate dal motore di posizionamento)'); }catch(_){} }
+    }catch(_eC){ console.warn('[mixed cabins]',_eC); }
     M._mixed=mix;
     if(sfields.groups && sfields.groups.length){
       const sasg={};
@@ -5849,6 +5925,8 @@ async function _calculateFixed(){
   document.getElementById('cabinInfo').textContent='Cabine calcolate: '+cabinN+' · '+cabinKVA+' kVA cad. · Pn CEI 0-16: '+_pn_cei_pre.toFixed(0)+' kW (= min(Pn_AC, kWp)) · posizionate baricentricamente';
 
   res={totalMod,kWp,numStr,remMod,totalArea,netArea:area2D(netPts),netFieldArea,totalRoadArea,totalCabinArea,cabinN,cabinArea,cabinKVA,cabins,roads,roadW,roadSpacing,isAutoRoad,manualRoadN,useNSRoad,GCR,pitch,strucDepth,strucWidth,strucH,rowCount:rowIdx,sysLoss,kWpHa:kWp/(totalArea/1e4),structures,rotPoly,rawPoly:rawPts,netPoly:netPts,minX,maxX,minY,maxY,modRow,modTilt,rowsStr,structCols,halfCols,stepX,tiltDeg,azDeg,azR,latitude,ori,modWm,modHm,modPwr,gapHm,gapVm,strLen,marginM,minHm,pitchMode,structGapM,useHalf,mountType:'fixed',roadsEW,roadWEW:ewP.roadWEW||0,useEW:ewP.useEW||false,spacingEW:ewP.spacingEW||150,isAutoEW:ewP.isAutoEW!==false,manualNEW:ewP.manualNEW||1,_rotHoles:areaHoles};
+  // v6.69: origine canonica del frame di layout (usata dagli export)
+  try{ const _oF=toXY(poly).o; res._originLL={lat:_oF.lat,lon:_oF.lon}; window._layoutOriginLL={lat:_oF.lat,lon:_oF.lon}; }catch(_){}
   res.elec = calcInvertersAndCablesConstrained(res, res.rotPoly);
   updateInvPreview();
   try {
@@ -6238,6 +6316,8 @@ async function _calculateTracker(){
     _rotHoles: trkExcHoles  // PHASE 2: expose exclusions for sub-area decomposition
   };
 
+  // v6.69: origine canonica del frame di layout (usata dagli export)
+  try{ const _oT=toXY(poly).o; res._originLL={lat:_oT.lat,lon:_oT.lon}; window._layoutOriginLL={lat:_oT.lat,lon:_oT.lon}; }catch(_){}
   res.elec = calcInvertersAndCablesConstrained(res, res.rotPoly);
   updateInvPreview();
   try {
@@ -13626,7 +13706,7 @@ function dlExcel8760(){
   mRows.push(mt);
   const ws2=XLSX.utils.aoa_to_sheet(mRows);
   ws2['!cols']=mHdr.map(h=>({wch:Math.max(h.length+2,13)}));
-  const cfgRows=[['Parametro','Valore'],['Potenza (kWp)',+cfg.kWp.toFixed(3)],['Latitudine',+cfg.lat.toFixed(5)],['Longitudine',+cfg.lon.toFixed(5)],['Tipo montaggio',isT?'SAT N-S orizzontale':'Fisso'],[isT?'Tilt max tracker (deg)':'Tilt (deg)',isT?cfg.maxTiltDeg:cfg.tiltDeg],[isT?'Azimut asse (deg)':'Azimut (deg)',isT?cfg.axisAzDeg:cfg.azDeg],['Pitch (m)',+cfg.pitch.toFixed(2)],['GCR',+cfg.gcr.toFixed(3)],['Bifacciale',cfg.bifacial?'Si':'No'],['Fattore bifacciale (%)',cfg.bifFactor||0],['NOCT (C)',cfg.noct||45],['Gamma temp (%/C)',cfg.gamma||0.4],[],['--- PERDITE ---','%'],['Soiling',cfg.losses.soiling||0],['Mismatch',cfg.losses.mismatch||0],['LID',cfg.losses.lid||0],['Cavi DC',cfg.losses.caviDC||0],['Inverter eff.',cfg.losses.invEff||0],['MPPT',cfg.losses.mppt||0],['Inv. consumo proprio',cfg.losses.invSelf||0],['Cavi AC',cfg.losses.caviAC||0],['Trafo Fe',cfg.losses.trafoFe||0],['Trafo Cu',cfg.losses.trafoCu||0],['Cavi MT',cfg.losses.caviMT||0],['Downtime',cfg.losses.downtime||0],[],['--- KPI ANNUALI ---',''],['E lordo (MWh)',+(ann.E_gross/1000).toFixed(3)],['E netto (MWh)',+(ann.E_net/1000).toFixed(3)],['Yield specifico (kWh/kWp)',+ann.yield_net.toFixed(0)],['PR (IEC 61724-1) (%)',+ann.PR_conv.toFixed(2)],['PR bifacciale (%)',+ann.PR_bif.toFixed(2)],['Perdita ombreggiamento (%)',+ann.shadeLoss.toFixed(3)],['Perdita orizzonte DTM (%)',typeof window._horizonLossPct!=='undefined'?+window._horizonLossPct.toFixed(3):0],['Guadagno bifacciale (%)',+ann.bifGain.toFixed(2)],[],['Ore diurne esportate',r.hourlyRows.length+' (ore notturne, produzione 0, omesse)'],['Generato il',new Date().toLocaleString('it-IT')],['Software','SolarLayout Pro v6.68'],['Fonte meteo', (function(){
+  const cfgRows=[['Parametro','Valore'],['Potenza (kWp)',+cfg.kWp.toFixed(3)],['Latitudine',+cfg.lat.toFixed(5)],['Longitudine',+cfg.lon.toFixed(5)],['Tipo montaggio',isT?'SAT N-S orizzontale':'Fisso'],[isT?'Tilt max tracker (deg)':'Tilt (deg)',isT?cfg.maxTiltDeg:cfg.tiltDeg],[isT?'Azimut asse (deg)':'Azimut (deg)',isT?cfg.axisAzDeg:cfg.azDeg],['Pitch (m)',+cfg.pitch.toFixed(2)],['GCR',+cfg.gcr.toFixed(3)],['Bifacciale',cfg.bifacial?'Si':'No'],['Fattore bifacciale (%)',cfg.bifFactor||0],['NOCT (C)',cfg.noct||45],['Gamma temp (%/C)',cfg.gamma||0.4],[],['--- PERDITE ---','%'],['Soiling',cfg.losses.soiling||0],['Mismatch',cfg.losses.mismatch||0],['LID',cfg.losses.lid||0],['Cavi DC',cfg.losses.caviDC||0],['Inverter eff.',cfg.losses.invEff||0],['MPPT',cfg.losses.mppt||0],['Inv. consumo proprio',cfg.losses.invSelf||0],['Cavi AC',cfg.losses.caviAC||0],['Trafo Fe',cfg.losses.trafoFe||0],['Trafo Cu',cfg.losses.trafoCu||0],['Cavi MT',cfg.losses.caviMT||0],['Downtime',cfg.losses.downtime||0],[],['--- KPI ANNUALI ---',''],['E lordo (MWh)',+(ann.E_gross/1000).toFixed(3)],['E netto (MWh)',+(ann.E_net/1000).toFixed(3)],['Yield specifico (kWh/kWp)',+ann.yield_net.toFixed(0)],['PR (IEC 61724-1) (%)',+ann.PR_conv.toFixed(2)],['PR bifacciale (%)',+ann.PR_bif.toFixed(2)],['Perdita ombreggiamento (%)',+ann.shadeLoss.toFixed(3)],['Perdita orizzonte DTM (%)',typeof window._horizonLossPct!=='undefined'?+window._horizonLossPct.toFixed(3):0],['Guadagno bifacciale (%)',+ann.bifGain.toFixed(2)],[],['Ore diurne esportate',r.hourlyRows.length+' (ore notturne, produzione 0, omesse)'],['Generato il',new Date().toLocaleString('it-IT')],['Software','SolarLayout Pro v6.69'],['Fonte meteo', (function(){
     const ds = (typeof document!=='undefined' && document.getElementById('pvSimDataset'))
       ? document.getElementById('pvSimDataset').value : 'SARAH2_MULTI';
     if(typeof _multiYearStats !== 'undefined' && _multiYearStats){
@@ -13870,7 +13950,7 @@ tfoot td{background:#e6f9ee;font-weight:700;color:#065f46;border-top:2px solid #
 <div class="note">
   Fonte dati: PVGIS © Commissione Europea — Joint Research Centre (re.jrc.ec.europa.eu/pvg_tools)<br>
   Database meteorologico: ERA5 / SARAH-2 | Anno meteorologico tipico (TMY) | Tecnologia: Si cristallino, installazione free-standing<br>
-  Generato da SolarLayout Pro v6.68 il ${new Date().toLocaleString('it-IT')} | Questo report è a scopo indicativo — per uso autorizzativo verificare con specialista abilitato.
+  Generato da SolarLayout Pro v6.69 il ${new Date().toLocaleString('it-IT')} | Questo report è a scopo indicativo — per uso autorizzativo verificare con specialista abilitato.
 </div>
 <script>
   // Print after a short delay to ensure full render
@@ -13923,7 +14003,7 @@ function dlPVGISWord(){
   '<table><thead><tr><th>Mese</th><th>E_d (kWh/d)</th><th>E_m (kWh)</th><th>E_m (MWh)</th><th>H_d (kWh/m²/d)</th></tr></thead>'+
   '<tbody>'+rows+'</tbody>'+
   '<tfoot><tr class="tot"><td>TOTALE</td><td>'+d.Ed.toFixed(2)+'</td><td>'+totEm.toFixed(0)+'</td><td>'+(totEm/1000).toFixed(3)+'</td><td>—</td></tr></tfoot></table>'+
-  '<p style="font-size:9pt;color:#888;margin-top:20pt">PVGIS © Commissione Europea — ERA5/SARAH2. Generato da SolarLayout Pro v6.68.</p>'+
+  '<p style="font-size:9pt;color:#888;margin-top:20pt">PVGIS © Commissione Europea — ERA5/SARAH2. Generato da SolarLayout Pro v6.69.</p>'+
   '</body></html>';
   dlBlob(html,'report_producibilita_pvgis.doc','application/msword;charset=utf-8');
 }
@@ -14309,7 +14389,7 @@ ${el.dcWarnMsg?`<div style="background:#fee2e2;border:1px solid #f87171;border-r
     :'<p style="color:#888;font-size:.82rem">Render 3D non ancora generati — usa lo Step 5 per generarli prima di stampare il report.</p>';
 
   const html=`<!DOCTYPE html><html lang="it"><head><meta charset="utf-8">
-<title>SolarLayout Pro v6.68 — Report Tecnico</title>
+<title>SolarLayout Pro v6.69 — Report Tecnico</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Segoe UI',Arial,sans-serif;font-size:11.5px;color:#1a1a1a;padding:20px;max-width:960px;margin:0 auto}
@@ -14861,7 +14941,7 @@ ${(function(){
 <h2>🖼 Rendering 3D Impianto</h2>
 ${renderHtml}
 
-<footer>SolarLayout Pro v6.68 · Calcolo layout impianti FV ground-mount · Elaborazione automatica — verificare sempre con progettista qualificato · Norme: CEI 0-16, CEI 64-8, CEI 82-25, CEI EN 62446</footer>
+<footer>SolarLayout Pro v6.69 · Calcolo layout impianti FV ground-mount · Elaborazione automatica — verificare sempre con progettista qualificato · Norme: CEI 0-16, CEI 64-8, CEI 82-25, CEI EN 62446</footer>
 <div class="noprint" style="text-align:center;margin:20px"><button onclick="window.print()" style="padding:12px 30px;background:#1d4ed8;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer">📄 Salva come PDF (Ctrl+P)</button></div>
 <script>
 document.addEventListener("DOMContentLoaded",function(){
@@ -16460,7 +16540,7 @@ async function dlCatastoDXF(){
     // TABELLA
     let tx=eMax+30,ty=nMax;const RH=5;
     dxf+=textEntity({e:tx,n:ty},'INQUADRAMENTO CATASTALE','TABELLA',4,7);ty-=RH*1.5;
-    dxf+=textEntity({e:tx,n:ty},'SolarLayout Pro v6.68','TABELLA',2,7);ty-=RH;
+    dxf+=textEntity({e:tx,n:ty},'SolarLayout Pro v6.69','TABELLA',2,7);ty-=RH;
     catastoData.forEach((p,ii)=>{
       dxf+=textEntity({e:tx,n:ty},(ii+1)+'. '+(p.comune||'')+' Fg.'+p.foglio+' M.'+p.particella+(p.area_tot_mq>0?' '+Math.round(p.area_tot_mq)+'m2':''),'TABELLA',2,7);ty-=RH;
     });
@@ -16490,9 +16570,8 @@ async function dlCatastoDXF(){
 }
 
 function cmpBuildDXF(rasterGrid){
-  // ── Origin: SAME as main DXF export (centroid of first area) ──
-  const fp=areas.find(a=>a.pts&&a.pts.length>=3);
-  const _orig=fp?toXY(fp.pts):{o:{lat:42,lon:12},pts:[]};
+  // ── Origin: v6.69 — IDENTICA al DXF principale (frame del calcolo) ──
+  const _orig={o:_slpOriginLL((typeof res!=='undefined')?res:null)};
   const _lat0=_orig.o.lat, _lon0=_orig.o.lon;
   const _cosL=Math.cos(_lat0*Math.PI/180);
   const _azR=res?res.azR||0:0;
@@ -16584,7 +16663,7 @@ function cmpBuildDXF(rasterGrid){
   }
   // ── Table ──
   const MG=Math.max((X1-X0)*0.08,50);let tx=X1+MG,ty=Y1;const RH=4.8;
-  d+=TXT(tx,ty,'SolarLayout Pro v6.68 — Catasto',3.6,'TABELLA');ty-=RH;
+  d+=TXT(tx,ty,'SolarLayout Pro v6.69 — Catasto',3.6,'TABELLA');ty-=RH;
   d+=TXT(tx,ty,new Date().toLocaleDateString('it-IT')+'  EPSG:'+(32600+utmZone)+' UTM',1.5,'TABELLA');ty-=RH*0.9;
   catastoData.forEach((p,ii)=>{
     d+=TXT(tx,ty,(ii+1)+'. Fg'+p.foglio+' Mapp'+p.particella+' '+(p.comune||''),1.7,'TABELLA');ty-=RH;
@@ -16604,7 +16683,7 @@ async function dlCatastoPDF(){
     const bg=()=>{doc.setFillColor(8,14,20);doc.rect(0,0,PW,PH,'F');};
     bg();
     doc.setFontSize(18);doc.setTextColor(245,158,11);
-    doc.text('Inquadramento Catastale — SolarLayout Pro v6.68',15,16);
+    doc.text('Inquadramento Catastale — SolarLayout Pro v6.69',15,16);
     doc.setFontSize(8);doc.setTextColor(155,190,215);
     const totArea=catastoData.reduce((s,p)=>s+(p.area_tot_mq||0),0);
     const impArea=catastoData.reduce((s,p)=>s+(p.area_imp_mq||0),0);
@@ -17173,9 +17252,9 @@ function dlKMLAll(){
 }
 function dlKML(){
   if(!res)return;const r=res;
-  // MUST use activeArea as origin — same as calculation
-  const _aPts2=(activeArea>=0&&areas[activeArea])?areas[activeArea].pts:(areas.find(a=>a.pts&&a.pts.length>=3)||{}).pts||[];
-  const orig=toXY(_aPts2),lat0=orig.o.lat,lon0=orig.o.lon,cosL=Math.cos(lat0*Math.PI/180),azR=r.azR;
+  // v6.69: origine = frame DEL CALCOLO (res._originLL), non areas[activeArea]
+  const _oKML=_slpOriginLL(r);
+  const lat0=_oKML.lat,lon0=_oKML.lon,cosL=Math.cos(lat0*Math.PI/180),azR=r.azR;
   const toG=(x,y)=>{const rx=x*Math.cos(azR)-y*Math.sin(azR),ry=x*Math.sin(azR)+y*Math.cos(azR);return{la:lat0+ry/110540,lo:lon0+rx/(cosL*111320)};};
   const pms=r.structures.map((st,i)=>{
     const cs=[{x:st.rx,y:st.ry},{x:st.rx+st.w,y:st.ry},{x:st.rx+st.w,y:st.ry+st.d},{x:st.rx,y:st.ry+st.d}];
@@ -17189,15 +17268,15 @@ function dlKML(){
     return'<Placemark><name>'+cab.label+'</name><styleUrl>#cabStyle</styleUrl><Polygon><outerBoundaryIs><LinearRing><coordinates>'+geo.join(' ')+'</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>';
   }).join('\n');
   const styles='<Style id="strStyle"><PolyStyle><color>ff91d42d</color></PolyStyle></Style>\n<Style id="cabStyle"><PolyStyle><color>ffcf6395</color></PolyStyle></Style>';
-  dlBlob('<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n<name>SolarLayout Pro v6.68</name>\n'+styles+'\n'+pms+'\n'+cabPms+'\n</Document></kml>','solar_layout.kml','application/vnd.google-earth.kml+xml');
+  dlBlob('<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n<name>SolarLayout Pro v6.69</name>\n'+styles+'\n'+pms+'\n'+cabPms+'\n</Document></kml>','solar_layout.kml','application/vnd.google-earth.kml+xml');
 }
 
 function dlDXF(){
   if(!res)return;
   const r=res;
-  // MUST use activeArea as origin — same as calculation's globalOrig
-  const _aPts=(activeArea>=0&&areas[activeArea]&&areas[activeArea].pts)?areas[activeArea].pts:(areas.find(a=>a.pts&&a.pts.length>=3)||{}).pts||[];
-  const orig=toXY(_aPts),lat0=orig.o.lat,lon0=orig.o.lon,cosL=Math.cos(lat0*Math.PI/180),azR=r.azR;
+  // v6.69: origine = frame DEL CALCOLO (res._originLL), non areas[activeArea]
+  const _oDXF=_slpOriginLL(r);
+  const lat0=_oDXF.lat,lon0=_oDXF.lon,cosL=Math.cos(lat0*Math.PI/180),azR=r.azR;
   const utmZone=Math.floor((lon0+180)/6)+1;
   const epsg=(lat0>=0?32600:32700)+utmZone;
 
@@ -17567,7 +17646,7 @@ function dlDXF(){
   const invNote=r.elec?('Inverter: '+r.elec.nInv+'×'+r.elec.invACkW+'kW AC — DC/AC: '+r.elec.dcac_ratio.toFixed(2)):'';
   const cableNote=r.elec&&r.elec.summary.length?r.elec.summary.map(s=>s.descr.replace('Cavo ','')+(': '+(s.m_spare/1000).toFixed(2)+'km +spare')).join(' | '):'';
   const noteLines=[
-    'SolarLayout Pro v6.68 — EPSG:'+epsg+' (UTM zona '+utmZone+')',
+    'SolarLayout Pro v6.69 — EPSG:'+epsg+' (UTM zona '+utmZone+')',
     isTrackerDXF?('Tracker: '+r.structures.filter(s=>!s.half).length+' interi + '+r.structures.filter(s=>s.half).length+' parziali'):
       ('Strutture: '+r.structures.length+' | Pitch N-S: '+(r.pitch*100).toFixed(0)+'cm'),
     isTrackerDXF?('Pitch E-O: '+(r.pitch*100).toFixed(0)+'cm | GCR: '+(r.GCR*100).toFixed(1)+'%'):
@@ -18103,7 +18182,7 @@ function dlComprehensiveReport(){
   const isT=r.mountType==='tracker';
   const hasPVGIS=!!pvData;
   const d=pvData;
-  const orig=toXY(poly), lat0=orig.o.lat, lon0=orig.o.lon;
+  const _oRep=_slpOriginLL(r), lat0=_oRep.lat, lon0=_oRep.lon; // v6.69: frame del calcolo
   const utmZone=Math.floor((lon0+180)/6)+1;
   const epsg=(lat0>=0?32600:32700)+utmZone;
   // toDataURL lancia SecurityError se il canvas ha tile cross-origin (satellite)
@@ -20498,7 +20577,7 @@ function saExportXLSX(){
 
   // ── Foglio 1: Parametri input ──────────────────────────────────────
   const inp=[
-    ['ANALISI PRODUZIONE SITO — SolarLayout Pro v6.68'],
+    ['ANALISI PRODUZIONE SITO — SolarLayout Pro v6.69'],
     ['Generato il', new Date().toLocaleString('it-IT')],
     [],
     ['SITO'],
@@ -20740,7 +20819,7 @@ async function saExportPDF(){
     @media print{body{padding:10mm 8mm}button{display:none}}
   </style>
   </head><body>
-  <h1>☀️ Analisi Produzione Sito — SolarLayout Pro v6.68</h1>
+  <h1>☀️ Analisi Produzione Sito — SolarLayout Pro v6.69</h1>
   <div class="kpis">
     <div class="kpi"><div class="v">${f(pv.lat,3)}°N</div><div class="l">Latitudine</div></div>
     <div class="kpi"><div class="v">${f(pv.lon,3)}°E</div><div class="l">Longitudine</div></div>
@@ -20780,7 +20859,7 @@ async function saExportPDF(){
     · <b>${f(best.annualMWh,0)} MWh/anno</b> · PR ${f(best.PR,1)}%
   </div>`:''}
   <div class="footer">
-    Generato da SolarLayout Pro v6.68 il ${new Date().toLocaleString('it-IT')} ·
+    Generato da SolarLayout Pro v6.69 il ${new Date().toLocaleString('it-IT')} ·
     Dati meteo: PVGIS © Commissione Europea ·
     Shading model: lineare 0-4% pitch_60°→pitch_auto, parabolico sotto pitch_60°
   </div>
@@ -20850,7 +20929,7 @@ async function _saDownloadHTMLReport(){
   }).join('');
 
   const htmlDl=`<!DOCTYPE html><html><head><meta charset="UTF-8">
-  <title>Preanalisi Produzione Sito — SolarLayout Pro v6.68</title>
+  <title>Preanalisi Produzione Sito — SolarLayout Pro v6.69</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Segoe UI',Arial,sans-serif;font-size:9pt;color:#1a2332;padding:18mm 14mm}
@@ -20870,7 +20949,7 @@ async function _saDownloadHTMLReport(){
     .footer{margin-top:12px;font-size:7pt;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:5px}
     @media print{body{padding:10mm 8mm}}
   </style></head><body>
-  <h1>☀️ Preanalisi Produzione Sito — SolarLayout Pro v6.68</h1>
+  <h1>☀️ Preanalisi Produzione Sito — SolarLayout Pro v6.69</h1>
   <div class="kpis">
     <div class="kpi"><div class="v">${f2(pv2.lat,3)}°N</div><div class="l">Latitudine</div></div>
     <div class="kpi"><div class="v">${f2(pv2.lon,3)}°E</div><div class="l">Longitudine</div></div>
@@ -20886,7 +20965,7 @@ async function _saDownloadHTMLReport(){
     <th>MWh/a</th><th>kWh/kWp</th><th>PR%</th><th>Shad%</th>
   </tr></thead><tbody>${rows2}</tbody></table>
   <div class="footer">
-    Generato da SolarLayout Pro v6.68 il ${new Date().toLocaleString('it-IT')} ·
+    Generato da SolarLayout Pro v6.69 il ${new Date().toLocaleString('it-IT')} ·
     PVGIS © Commissione Europea · Packing eff. 0.88 · GCR limiti: fisso ≤0.60, Trk1P ≤0.55, Trk2P ≤0.50
   </div>
   <script>window.onload=()=>window.print();<\/script>
@@ -20903,7 +20982,7 @@ async function _saDownloadHTMLReport(){
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  PDF DATASHEET READER — SolarLayout Pro v6.68  (rewrite v2)
+//  PDF DATASHEET READER — SolarLayout Pro v6.69  (rewrite v2)
 //  Legge datasheet PDF di moduli FV, inverter e trasformatori.
 //  Flusso: PDF.js (estrazione testo) → smart table-parser + regex multi-lingua
 //          → opzionale Claude API per OCR/parsing avanzato
