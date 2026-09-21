@@ -1,0 +1,19 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# _redirects — Netlify (solarlayout.pro)
+# Questo file DEVE stare nella ROOT della cartella pubblicata (accanto a
+# index.html e finance.html), senza estensione. Dopo il deploy la regola è
+# attiva subito.
+#
+# VERIFICA RAPIDA che la regola sia viva (da browser, anche da telefono):
+#   https://solarlayout.pro/pvgis/v5_3/PVcalc?lat=44.43&lon=12.23&peakpower=1&loss=14&outputformat=json
+#   → JSON PVGIS (anche un errore parametri va bene: il proxy risponde)  = OK
+#   → "Page not found" di Netlify                                        = regola assente/deploy vecchio
+# In alternativa, dalla console dell'app: window.debugPVGIS()
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Reverse-proxy PVGIS (SAME-ORIGIN, niente CORS, niente proxy terzi).
+# SolarLayoutPro chiama /pvgis/v5_3/seriescalc?... e /pvgis/v5_3/PVcalc?...
+# Netlify inoltra automaticamente anche la query string.
+# Nota: limite Netlify 26 s/richiesta — per questo l'app scarica UN ANNO alla
+# volta (2–8 s tipici) e dalla v6.43 ritenta automaticamente gli anni falliti.
+/pvgis/*  https://re.jrc.ec.europa.eu/api/:splat  200
