@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<!-- v6.71: DORSALI DC, ORDINE BILANCIAMENTO E RIPRISTINO GRUPPI AL CARICAMENTO. (1) SERPENTINA VERA: l'ordine delle strutture era riga per riga sempre da Ovest a Est, quindi al cambio riga il successore di una struttura sul bordo Est era quella sul bordo Ovest della riga successiva, a circa 1,7 km. Le zone inverter (slice di ~20 strutture consecutive) a cavallo di un cambio riga si allargavano su tutta la larghezza del campo: da qui le dorsali DC da 1,3-1,4 km, lo span mediano di 230 m per inverter e i 2037 km di rame DC. Ora l'ordine e' boustrofedico (verso invertito a righe alterne per il fisso, a colonne alterne per il tracker), che e' anche il presupposto dell'ancoraggio stringhe con riporto modulare. (2) ORDINE DELLE FASI: il bilanciamento cabine a capacita' vincolata introdotto in v6.70 girava DOPO il PASS 2 di selective balancing; il PASS 2 tirava quindi l'inverter verso la cabina assegnata dal nearest e subito dopo il bilanciamento gliene assegnava un'altra, con tratte AC fino a 929 m e sezioni fino a 630 mm2 contro i 300 mm2 della v6.69. Ora il bilanciamento precede il PASS 2. (3) GRUPPI AL CARICAMENTO: _slpGroupsSync veniva invocata nel blocco uiState, quando l'array areas era ancora vuoto; con meno di due aree valide il pannello mixBox resta nascosto e le liste non vengono disegnate, cosi' dopo il caricamento di un progetto le configurazioni C-x e i sottocampi S-x risultavano spariti pur restando in memoria e attivi nel calcolo. Ora la sincronizzazione avviene dopo il ripristino delle aree, con conferma nel log e nella barra di stato, e il salvataggio include anche sel e active dei due motori. -->
 <!-- v6.70: CABINE — POSIZIONAMENTO E CAPACITA'. Dal collaudo v6.69 (export ora georeferenziati correttamente, verificati su DXF e KML: perimetri coincidenti con l'input entro 0,1 m) sono emerse due carenze elettriche gravi. (1) ZONE CABINA VUOTE: il k-means che definisce le zone seminava tutti i centri sulla DIAGONALE del bbox normalizzato; su campi triangolari o allungati piu' centri restavano senza strutture, le zone vuote venivano scartate e venivano posizionate MENO cabine di quelle richieste (caso di prova: 24 posizionate su 29 richieste). Ora semina farthest-point deterministica (_slpCabSeed) e ri-semina dei cluster vuoti a ogni iterazione, in calcCabinPositions e in _cabinKMeans (modi boundary e road). (2) CABINE SOVRACCARICHE: nearestCabIdx assegnava l'inverter alla cabina piu' vicina senza controllare la taglia del trasformatore; nel caso di prova 16 cabine su 24 erano oltre i 3300 kVA, con un massimo di 21 inverter (6930 kW, 210 percento) su una sola cabina e una cabina completamente scarica. Aggiunto il bilanciamento a capacita' vincolata dopo la creazione degli inverter, che sposta gli inverter dalle cabine sature alla cabina disponibile piu' vicina e livella il carico quando la capacita' totale non basta; il carico effettivo per cabina e' salvato in cab.loadKW. (3) ALERT: nel percorso misto checkInverterCabinAlerts non veniva mai chiamato, quindi nessun avviso compariva nel report; ora viene invocato e valuta il sovraccarico REALE per cabina oltre alla media. (4) Pn CEI 0-16: la tabella dichiarava min(Pn_AC, Pdc, N per kVA cabine) ma il codice calcolava solo min(Pn_AC, Pdc); ora il limite di trasformazione installata e' applicato davvero, in report ed Excel. (5) AREA STRADE nel report: era ricalcolata come n_strade per larghezza per l'altezza del bbox COMPLESSIVO (che con due campi distinti copre anche lo spazio fra di essi), sovrastimando l'area e contraddicendo l'area netta; ora usa r.totalRoadArea del layout. -->
 <!-- v6.69: TRE FIX SU GEOREFERENZIAZIONE E MERGE ELETTRICO DEL CALCOLO MISTO (C-x). (1) ORIGINE CANONICA: il frame del misto ha origine in results[0].o (baricentro della prima area del primo gruppo), ma nel finally activeArea viene ripristinata alla scelta utente e dlKML/dlDXF/cmpBuildDXF/report ricalcolavano l'origine da areas[activeArea]: TUTTO l'impianto usciva traslato del vettore fra i baricentri (caso reale: 974 m E / 848 m N = 1290 m). Ora ogni percorso di calcolo timbra res._originLL (e window._layoutOriginLL per il render 3D) e gli export leggono _slpOriginLL(res). (2) DOPPIO SHIFT DEI PERIMETRI: _slpShiftRes traslava già rawPoly/netPoly e il blocco CONTRATTO DATI CANONICO ri-applicava __mgGx/__mgGy sul fallback r.rawPoly (sempre usato: un gruppo mono-area non popola _allRawPolys), quindi il perimetro del secondo gruppo usciva a 2x offset in DXF/KML. In più i poligoni geografici venivano traslati con l'offset RUOTATO: ora _slpShiftRes accetta gx,gy separati da dx,dy. (3) RE-INDICIZZAZIONE ELETTRICA: il merge misto concatenava inverters/cableDC/cableAC/cableMT senza rimappare cabIdx/invIdx/indici struttura e stringa, quindi gli inverter dei gruppi i>0 puntavano alle cabine del PRIMO gruppo (linee AC fra campi diversi sul planimetrico, colonna Cabina errata in report/Excel, id INV e S duplicati, CAB duplicate in KML). Ora offset _si0/_ci0/_ii0/_st0 come in runMultiAreaCalc, id inverter prefissati col label del gruppo, tag _areaIdx/_grpIdx su strutture, cabine e inverter, cabine rinumerate CAB 1..N e cabinN/totalCabinArea allineati alle cabine effettivamente posizionate (con avviso nel log diagnostico se il motore ne scarta). -->
 <!-- v6.68: F2.1 — ELETTRICO DEDICATO PER SOTTOCAMPO. Ripartizione POSIZIONALE (point-in-polygon sui perimetri globali delle aree, stesso frame del merge) di strutture, inverter e cabine sui sottocampi: per ogni S-x vengono calcolati kWp, moduli, N inverter, ΣPac, cabine e ΣkVA, quindi Pn CEI = min(ΣPac, Pdc, ΣkVA cabine), rapporto DC/AC ed esito CEI 0-16 per sottocampo. La TRATTA DI CONNESSIONE ALLA RETE diventa UNA PER SOTTOCAMPO nel riepilogo cavi, con la distanza presa dallo snapshot Connessione del sottocampo (il sottocampo implicito/residuo usa i valori correnti della UI) e destinazione "PDC S-x → Punto consegna MT/AT". Il breakdown mostra la tabella completa per sottocampo con verifica CEI; l'esito del calcolo riporta la Pn di ciascuno; nel log la riga "F2 elettrico" riepiloga Pn/inverter/cabine/km per S-x. LIMITI DICHIARATI (F2.2): sezione del cavo tratta rete = dimensionamento globale (ricalcolo I→sezione per sottocampo in F2.2); cabine assegnate per posizione (motore cabine subfield-aware, mai condivise tra sottocampi, in F2.2); fisso+tracker misti bloccati finché la producibilità non gestisce N serie PVGIS pesate. -->
@@ -58,8 +59,8 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="build-version" content="v6.70">
-<title>SolarLayout Pro v6.70 (PROVA — accesso aperto)</title>
+<meta name="build-version" content="v6.71">
+<title>SolarLayout Pro v6.71 (PROVA — accesso aperto)</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;900&family=JetBrains+Mono:wght@400;600&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -515,7 +516,7 @@ document.addEventListener('DOMContentLoaded',function(){
 </script>
 
 <div class="hdr">
-  <div class="logo">⚡ SolarLayout<em>GROUND-MOUNT PV CALCULATOR v6.70</em></div>
+  <div class="logo">⚡ SolarLayout<em>GROUND-MOUNT PV CALCULATOR v6.71</em></div>
   <button id="themeToggle" onclick="toggleTheme()">🌙 Notte</button>
   <button id="authLogoutBtn" onclick="if(window.netlifyIdentity)netlifyIdentity.logout();" title="Esci dall'account" style="margin-left:6px">🚪 Esci</button>
   <div class="chips">
@@ -7715,16 +7716,28 @@ function calcInvertersAndCables(r){
       subPolys = null;
     }
 
+    // v6.71: ORDINE SERPENTINA VERO (boustrofedico). Prima l'ordine era
+    // riga-per-riga sempre da Ovest a Est: al cambio riga il successore di una
+    // struttura sul bordo EST era quella sul bordo OVEST della riga dopo, cioe'
+    // a ~1,7 km di distanza. Le zone inverter (slice di ~20 strutture
+    // consecutive) che cadevano a cavallo di un cambio riga si allargavano su
+    // TUTTA la larghezza del campo: da qui le dorsali DC da 1,3-1,4 km e lo
+    // span mediano di 230 m. Invertendo il verso a righe alterne il successore
+    // resta sempre fisicamente adiacente — che e' anche il presupposto
+    // dell'ancoraggio stringhe con riporto modulare (_carryAnchors).
+    const _par = v => (((v % 2) + 2) % 2);   // parita' robusta anche con indici negativi
     const sortOrder = isTracker
       ? (a,b) => {
           const sa=r.structures[a], sb=r.structures[b];
           const ca=Math.round(sa.cx/_colBin), cb=Math.round(sb.cx/_colBin);
-          return ca!==cb ? ca-cb : sa.cy-sb.cy;
+          if(ca!==cb) return ca-cb;
+          return _par(ca)===0 ? sa.cy-sb.cy : sb.cy-sa.cy;
         }
       : (a,b) => {
           const sa=r.structures[a], sb=r.structures[b];
           const ra=Math.round(sa.cy/_rowBin), rb=Math.round(sb.cy/_rowBin);
-          return ra!==rb ? ra-rb : sa.cx-sb.cx;
+          if(ra!==rb) return ra-rb;
+          return _par(ra)===0 ? sa.cx-sb.cx : sb.cx-sa.cx;
         };
 
     // ── Build zones: either per-sub-area (Phase 2) or single-area (Phase 1) ──
@@ -7891,6 +7904,55 @@ function calcInvertersAndCables(r){
     };
   });
 
+  // ── v6.70/6.71: BILANCIAMENTO CABINE A CAPACITA' VINCOLATA ───────────────────
+  // nearestCabIdx assegna ogni inverter alla cabina PIU' VICINA senza guardare
+  // la taglia del trasformatore: su campi allungati si arrivava a 21 inverter
+  // (6930 kW) su una cabina da 3300 kVA mentre altre restavano scariche.
+  // Qui si spostano gli inverter dalle cabine sature alla cabina disponibile
+  // piu' vicina; se la capacita' TOTALE non basta si livella comunque il carico
+  // e l'eccedenza viene segnalata dagli alert (checkInverterCabinAlerts).
+  (function cabinCapacityBalance(){
+    const cabs=r.cabins||[]; const nC=cabs.length;
+    const capKW=+(r.cabinKVA||0);
+    if(nC<1||!(capKW>0)) return;
+    const load=new Float64Array(nC);
+    inverters.forEach(inv=>{ if(inv.cabIdx>=0&&inv.cabIdx<nC) load[inv.cabIdx]+=invACkW; });
+    const dst=(inv,ci)=>Math.abs(inv.cx-cabs[ci].cx)+Math.abs(inv.cy-cabs[ci].cy);
+    if(nC>1){
+      const maxIter=Math.max(50, inverters.length*3);
+      for(let it=0; it<maxIter; it++){
+        let src=-1, ov=1e-6;
+        for(let ci=0;ci<nC;ci++){ const o=load[ci]-capKW; if(o>ov){ ov=o; src=ci; } }
+        if(src<0) break;
+        let best=null, lvl=null;
+        for(const inv of inverters){
+          if(inv.cabIdx!==src) continue;
+          for(let ci=0;ci<nC;ci++){
+            if(ci===src) continue;
+            const extra=dst(inv,ci)-dst(inv,src);
+            if(load[ci]+invACkW<=capKW+1e-6){                 // cabina con capacita' libera
+              if(!best||extra<best.extra) best={inv,ci,extra};
+            }else if(load[ci]+invACkW<load[src]-1e-6){         // livellamento (capacita' totale insufficiente)
+              if(!lvl||load[ci]<lvl.l||(load[ci]===lvl.l&&extra<lvl.extra)) lvl={inv,ci,extra,l:load[ci]};
+            }
+          }
+        }
+        const mv=best||lvl;
+        if(!mv) break;
+        load[src]-=invACkW; load[mv.ci]+=invACkW; mv.inv.cabIdx=mv.ci;
+      }
+    }
+    let maxL=0;
+    for(let ci=0;ci<nC;ci++){ cabs[ci].loadKW=+load[ci].toFixed(1); if(load[ci]>maxL) maxL=load[ci]; }
+    r._cabMaxLoadKW=+maxL.toFixed(1);
+    r._cabCapKW=nC*capKW;
+  })();
+
+  // v6.71: il bilanciamento sopra DEVE precedere il PASS 2. In v6.70 girava
+  // dopo il calcolo dei cavi: il PASS 2 tirava l'inverter verso la cabina
+  // ASSEGNATA DAL NEAREST, poi il bilanciamento gliene assegnava un'altra —
+  // inverter spostati verso una cabina sbagliata, tratte AC fino a 929 m e
+  // sezioni fino a 630 mm2 (in v6.69 bastavano 300 mm2).
   // ── PASS 2: Selective balancing ──────────────────────────────────────────
   // For each inverter, compute the AC section to its assigned cabin using the
   // straight-line Manhattan distance as a proxy. If secAC > 300mm² (engineering
@@ -8078,50 +8140,6 @@ function calcInvertersAndCables(r){
   // Alias per codice successivo
   const finalStrToInv = new Array(r.numStr).fill(0);
   inverters.forEach((inv,gi)=>inv.strings.forEach(si=>{finalStrToInv[si]=gi;}));
-
-  // ── v6.70: BILANCIAMENTO CABINE A CAPACITA' VINCOLATA ───────────────────
-  // nearestCabIdx assegna ogni inverter alla cabina PIU' VICINA senza guardare
-  // la taglia del trasformatore: su campi allungati si arrivava a 21 inverter
-  // (6930 kW) su una cabina da 3300 kVA mentre altre restavano scariche.
-  // Qui si spostano gli inverter dalle cabine sature alla cabina disponibile
-  // piu' vicina; se la capacita' TOTALE non basta si livella comunque il carico
-  // e l'eccedenza viene segnalata dagli alert (checkInverterCabinAlerts).
-  (function cabinCapacityBalance(){
-    const cabs=r.cabins||[]; const nC=cabs.length;
-    const capKW=+(r.cabinKVA||0);
-    if(nC<1||!(capKW>0)) return;
-    const load=new Float64Array(nC);
-    inverters.forEach(inv=>{ if(inv.cabIdx>=0&&inv.cabIdx<nC) load[inv.cabIdx]+=invACkW; });
-    const dst=(inv,ci)=>Math.abs(inv.cx-cabs[ci].cx)+Math.abs(inv.cy-cabs[ci].cy);
-    if(nC>1){
-      const maxIter=Math.max(50, inverters.length*3);
-      for(let it=0; it<maxIter; it++){
-        let src=-1, ov=1e-6;
-        for(let ci=0;ci<nC;ci++){ const o=load[ci]-capKW; if(o>ov){ ov=o; src=ci; } }
-        if(src<0) break;
-        let best=null, lvl=null;
-        for(const inv of inverters){
-          if(inv.cabIdx!==src) continue;
-          for(let ci=0;ci<nC;ci++){
-            if(ci===src) continue;
-            const extra=dst(inv,ci)-dst(inv,src);
-            if(load[ci]+invACkW<=capKW+1e-6){                 // cabina con capacita' libera
-              if(!best||extra<best.extra) best={inv,ci,extra};
-            }else if(load[ci]+invACkW<load[src]-1e-6){         // livellamento (capacita' totale insufficiente)
-              if(!lvl||load[ci]<lvl.l||(load[ci]===lvl.l&&extra<lvl.extra)) lvl={inv,ci,extra,l:load[ci]};
-            }
-          }
-        }
-        const mv=best||lvl;
-        if(!mv) break;
-        load[src]-=invACkW; load[mv.ci]+=invACkW; mv.inv.cabIdx=mv.ci;
-      }
-    }
-    let maxL=0;
-    for(let ci=0;ci<nC;ci++){ cabs[ci].loadKW=+load[ci].toFixed(1); if(load[ci]>maxL) maxL=load[ci]; }
-    r._cabMaxLoadKW=+maxL.toFixed(1);
-    r._cabCapKW=nC*capKW;
-  })();
 
     // ── Calcolo cavi AC inverter→cabina (trifase alluminio) ────
   const cableAC = [];
@@ -13840,7 +13858,7 @@ function dlExcel8760(){
   mRows.push(mt);
   const ws2=XLSX.utils.aoa_to_sheet(mRows);
   ws2['!cols']=mHdr.map(h=>({wch:Math.max(h.length+2,13)}));
-  const cfgRows=[['Parametro','Valore'],['Potenza (kWp)',+cfg.kWp.toFixed(3)],['Latitudine',+cfg.lat.toFixed(5)],['Longitudine',+cfg.lon.toFixed(5)],['Tipo montaggio',isT?'SAT N-S orizzontale':'Fisso'],[isT?'Tilt max tracker (deg)':'Tilt (deg)',isT?cfg.maxTiltDeg:cfg.tiltDeg],[isT?'Azimut asse (deg)':'Azimut (deg)',isT?cfg.axisAzDeg:cfg.azDeg],['Pitch (m)',+cfg.pitch.toFixed(2)],['GCR',+cfg.gcr.toFixed(3)],['Bifacciale',cfg.bifacial?'Si':'No'],['Fattore bifacciale (%)',cfg.bifFactor||0],['NOCT (C)',cfg.noct||45],['Gamma temp (%/C)',cfg.gamma||0.4],[],['--- PERDITE ---','%'],['Soiling',cfg.losses.soiling||0],['Mismatch',cfg.losses.mismatch||0],['LID',cfg.losses.lid||0],['Cavi DC',cfg.losses.caviDC||0],['Inverter eff.',cfg.losses.invEff||0],['MPPT',cfg.losses.mppt||0],['Inv. consumo proprio',cfg.losses.invSelf||0],['Cavi AC',cfg.losses.caviAC||0],['Trafo Fe',cfg.losses.trafoFe||0],['Trafo Cu',cfg.losses.trafoCu||0],['Cavi MT',cfg.losses.caviMT||0],['Downtime',cfg.losses.downtime||0],[],['--- KPI ANNUALI ---',''],['E lordo (MWh)',+(ann.E_gross/1000).toFixed(3)],['E netto (MWh)',+(ann.E_net/1000).toFixed(3)],['Yield specifico (kWh/kWp)',+ann.yield_net.toFixed(0)],['PR (IEC 61724-1) (%)',+ann.PR_conv.toFixed(2)],['PR bifacciale (%)',+ann.PR_bif.toFixed(2)],['Perdita ombreggiamento (%)',+ann.shadeLoss.toFixed(3)],['Perdita orizzonte DTM (%)',typeof window._horizonLossPct!=='undefined'?+window._horizonLossPct.toFixed(3):0],['Guadagno bifacciale (%)',+ann.bifGain.toFixed(2)],[],['Ore diurne esportate',r.hourlyRows.length+' (ore notturne, produzione 0, omesse)'],['Generato il',new Date().toLocaleString('it-IT')],['Software','SolarLayout Pro v6.70'],['Fonte meteo', (function(){
+  const cfgRows=[['Parametro','Valore'],['Potenza (kWp)',+cfg.kWp.toFixed(3)],['Latitudine',+cfg.lat.toFixed(5)],['Longitudine',+cfg.lon.toFixed(5)],['Tipo montaggio',isT?'SAT N-S orizzontale':'Fisso'],[isT?'Tilt max tracker (deg)':'Tilt (deg)',isT?cfg.maxTiltDeg:cfg.tiltDeg],[isT?'Azimut asse (deg)':'Azimut (deg)',isT?cfg.axisAzDeg:cfg.azDeg],['Pitch (m)',+cfg.pitch.toFixed(2)],['GCR',+cfg.gcr.toFixed(3)],['Bifacciale',cfg.bifacial?'Si':'No'],['Fattore bifacciale (%)',cfg.bifFactor||0],['NOCT (C)',cfg.noct||45],['Gamma temp (%/C)',cfg.gamma||0.4],[],['--- PERDITE ---','%'],['Soiling',cfg.losses.soiling||0],['Mismatch',cfg.losses.mismatch||0],['LID',cfg.losses.lid||0],['Cavi DC',cfg.losses.caviDC||0],['Inverter eff.',cfg.losses.invEff||0],['MPPT',cfg.losses.mppt||0],['Inv. consumo proprio',cfg.losses.invSelf||0],['Cavi AC',cfg.losses.caviAC||0],['Trafo Fe',cfg.losses.trafoFe||0],['Trafo Cu',cfg.losses.trafoCu||0],['Cavi MT',cfg.losses.caviMT||0],['Downtime',cfg.losses.downtime||0],[],['--- KPI ANNUALI ---',''],['E lordo (MWh)',+(ann.E_gross/1000).toFixed(3)],['E netto (MWh)',+(ann.E_net/1000).toFixed(3)],['Yield specifico (kWh/kWp)',+ann.yield_net.toFixed(0)],['PR (IEC 61724-1) (%)',+ann.PR_conv.toFixed(2)],['PR bifacciale (%)',+ann.PR_bif.toFixed(2)],['Perdita ombreggiamento (%)',+ann.shadeLoss.toFixed(3)],['Perdita orizzonte DTM (%)',typeof window._horizonLossPct!=='undefined'?+window._horizonLossPct.toFixed(3):0],['Guadagno bifacciale (%)',+ann.bifGain.toFixed(2)],[],['Ore diurne esportate',r.hourlyRows.length+' (ore notturne, produzione 0, omesse)'],['Generato il',new Date().toLocaleString('it-IT')],['Software','SolarLayout Pro v6.71'],['Fonte meteo', (function(){
     const ds = (typeof document!=='undefined' && document.getElementById('pvSimDataset'))
       ? document.getElementById('pvSimDataset').value : 'SARAH2_MULTI';
     if(typeof _multiYearStats !== 'undefined' && _multiYearStats){
@@ -14084,7 +14102,7 @@ tfoot td{background:#e6f9ee;font-weight:700;color:#065f46;border-top:2px solid #
 <div class="note">
   Fonte dati: PVGIS © Commissione Europea — Joint Research Centre (re.jrc.ec.europa.eu/pvg_tools)<br>
   Database meteorologico: ERA5 / SARAH-2 | Anno meteorologico tipico (TMY) | Tecnologia: Si cristallino, installazione free-standing<br>
-  Generato da SolarLayout Pro v6.70 il ${new Date().toLocaleString('it-IT')} | Questo report è a scopo indicativo — per uso autorizzativo verificare con specialista abilitato.
+  Generato da SolarLayout Pro v6.71 il ${new Date().toLocaleString('it-IT')} | Questo report è a scopo indicativo — per uso autorizzativo verificare con specialista abilitato.
 </div>
 <script>
   // Print after a short delay to ensure full render
@@ -14137,7 +14155,7 @@ function dlPVGISWord(){
   '<table><thead><tr><th>Mese</th><th>E_d (kWh/d)</th><th>E_m (kWh)</th><th>E_m (MWh)</th><th>H_d (kWh/m²/d)</th></tr></thead>'+
   '<tbody>'+rows+'</tbody>'+
   '<tfoot><tr class="tot"><td>TOTALE</td><td>'+d.Ed.toFixed(2)+'</td><td>'+totEm.toFixed(0)+'</td><td>'+(totEm/1000).toFixed(3)+'</td><td>—</td></tr></tfoot></table>'+
-  '<p style="font-size:9pt;color:#888;margin-top:20pt">PVGIS © Commissione Europea — ERA5/SARAH2. Generato da SolarLayout Pro v6.70.</p>'+
+  '<p style="font-size:9pt;color:#888;margin-top:20pt">PVGIS © Commissione Europea — ERA5/SARAH2. Generato da SolarLayout Pro v6.71.</p>'+
   '</body></html>';
   dlBlob(html,'report_producibilita_pvgis.doc','application/msword;charset=utf-8');
 }
@@ -14528,7 +14546,7 @@ ${el.dcWarnMsg?`<div style="background:#fee2e2;border:1px solid #f87171;border-r
     :'<p style="color:#888;font-size:.82rem">Render 3D non ancora generati — usa lo Step 5 per generarli prima di stampare il report.</p>';
 
   const html=`<!DOCTYPE html><html lang="it"><head><meta charset="utf-8">
-<title>SolarLayout Pro v6.70 — Report Tecnico</title>
+<title>SolarLayout Pro v6.71 — Report Tecnico</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Segoe UI',Arial,sans-serif;font-size:11.5px;color:#1a1a1a;padding:20px;max-width:960px;margin:0 auto}
@@ -15080,7 +15098,7 @@ ${(function(){
 <h2>🖼 Rendering 3D Impianto</h2>
 ${renderHtml}
 
-<footer>SolarLayout Pro v6.70 · Calcolo layout impianti FV ground-mount · Elaborazione automatica — verificare sempre con progettista qualificato · Norme: CEI 0-16, CEI 64-8, CEI 82-25, CEI EN 62446</footer>
+<footer>SolarLayout Pro v6.71 · Calcolo layout impianti FV ground-mount · Elaborazione automatica — verificare sempre con progettista qualificato · Norme: CEI 0-16, CEI 64-8, CEI 82-25, CEI EN 62446</footer>
 <div class="noprint" style="text-align:center;margin:20px"><button onclick="window.print()" style="padding:12px 30px;background:#1d4ed8;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer">📄 Salva come PDF (Ctrl+P)</button></div>
 <script>
 document.addEventListener("DOMContentLoaded",function(){
@@ -16679,7 +16697,7 @@ async function dlCatastoDXF(){
     // TABELLA
     let tx=eMax+30,ty=nMax;const RH=5;
     dxf+=textEntity({e:tx,n:ty},'INQUADRAMENTO CATASTALE','TABELLA',4,7);ty-=RH*1.5;
-    dxf+=textEntity({e:tx,n:ty},'SolarLayout Pro v6.70','TABELLA',2,7);ty-=RH;
+    dxf+=textEntity({e:tx,n:ty},'SolarLayout Pro v6.71','TABELLA',2,7);ty-=RH;
     catastoData.forEach((p,ii)=>{
       dxf+=textEntity({e:tx,n:ty},(ii+1)+'. '+(p.comune||'')+' Fg.'+p.foglio+' M.'+p.particella+(p.area_tot_mq>0?' '+Math.round(p.area_tot_mq)+'m2':''),'TABELLA',2,7);ty-=RH;
     });
@@ -16802,7 +16820,7 @@ function cmpBuildDXF(rasterGrid){
   }
   // ── Table ──
   const MG=Math.max((X1-X0)*0.08,50);let tx=X1+MG,ty=Y1;const RH=4.8;
-  d+=TXT(tx,ty,'SolarLayout Pro v6.70 — Catasto',3.6,'TABELLA');ty-=RH;
+  d+=TXT(tx,ty,'SolarLayout Pro v6.71 — Catasto',3.6,'TABELLA');ty-=RH;
   d+=TXT(tx,ty,new Date().toLocaleDateString('it-IT')+'  EPSG:'+(32600+utmZone)+' UTM',1.5,'TABELLA');ty-=RH*0.9;
   catastoData.forEach((p,ii)=>{
     d+=TXT(tx,ty,(ii+1)+'. Fg'+p.foglio+' Mapp'+p.particella+' '+(p.comune||''),1.7,'TABELLA');ty-=RH;
@@ -16822,7 +16840,7 @@ async function dlCatastoPDF(){
     const bg=()=>{doc.setFillColor(8,14,20);doc.rect(0,0,PW,PH,'F');};
     bg();
     doc.setFontSize(18);doc.setTextColor(245,158,11);
-    doc.text('Inquadramento Catastale — SolarLayout Pro v6.70',15,16);
+    doc.text('Inquadramento Catastale — SolarLayout Pro v6.71',15,16);
     doc.setFontSize(8);doc.setTextColor(155,190,215);
     const totArea=catastoData.reduce((s,p)=>s+(p.area_tot_mq||0),0);
     const impArea=catastoData.reduce((s,p)=>s+(p.area_imp_mq||0),0);
@@ -16961,8 +16979,9 @@ function projectSerialize(){
     p50p90Config:(typeof p50p90Config!=='undefined'?{...p50p90Config}:null),
     pvSimDataset:document.getElementById('pvSimDataset')?.value||'CALIBRATO',
     allowCrossCabling:document.getElementById('allowCrossCabling')?.checked!==false,
-    configMix:(window.configs&&configs.groups&&configs.groups.length)?{groups:configs.groups}:undefined,
-    sottocampi:(window.sfields&&sfields.groups&&sfields.groups.length)?{groups:sfields.groups}:undefined,
+    // v6.71: salva anche sel/active (selezione aree in corso e gruppo in modifica)
+    configMix:(window.configs&&configs.groups&&configs.groups.length)?{groups:configs.groups,sel:configs.sel||{},active:configs.active}:undefined,
+    sottocampi:(window.sfields&&sfields.groups&&sfields.groups.length)?{groups:sfields.groups,sel:sfields.sel||{},active:sfields.active}:undefined,
     firmaNome:       document.getElementById('firmaNome')?.value||'',
     firmaAzienda:    document.getElementById('firmaAzienda')?.value||'',
     firmaCommittente:document.getElementById('firmaCommittente')?.value||'',
@@ -17173,6 +17192,11 @@ function projectDeserialize(txt){
         const _mDef=(data&&data.mountType)||'fixed';
         configs.groups.forEach(g=>{ if(g.params && g.params.__mount===undefined) g.params.__mount=_mDef; }); }
       if(ui.sottocampi){ sfields.groups=(ui.sottocampi.groups||[]).map(g=>({on:true,...g})); }
+      // v6.71: ripristina anche la selezione aree e il gruppo attivo
+      if(ui.configMix&&ui.configMix.sel) configs.sel={...ui.configMix.sel};
+      if(ui.sottocampi&&ui.sottocampi.sel) sfields.sel={...ui.sottocampi.sel};
+      if(ui.configMix&&ui.configMix.active!==undefined) configs.active=ui.configMix.active;
+      if(ui.sottocampi&&ui.sottocampi.active!==undefined) sfields.active=ui.sottocampi.active;
       // v6.66: motore attivo appena esistono gruppi — nessun flag da ripristinare
       configs.enabled=configs.groups.length>0; sfields.enabled=sfields.groups.length>0;
       if(typeof _slpGroupsSync==='function') _slpGroupsSync();
@@ -17241,6 +17265,26 @@ function projectDeserialize(txt){
   renderAreaBar&&renderAreaBar();
   updatePolyInfo&&updatePolyInfo();
   _updateExclBtnVisibility&&_updateExclBtnVisibility();
+
+  // v6.71: RI-SINCRONIZZA configurazioni (C-x) e sottocampi (S-x) DOPO il
+  // ripristino delle aree. _slpGroupsSync veniva chiamata nel blocco uiState,
+  // quando areas era ancora vuoto: con meno di 2 aree valide il pannello
+  // mixBox resta display:none e le liste non vengono disegnate, quindi dopo il
+  // caricamento i gruppi C-1/C-2 e S-1/S-2 erano invisibili (pur restando in
+  // memoria e attivi nel calcolo — situazione peggiore: si calcolava in misto
+  // senza che l'utente lo vedesse).
+  try{
+    if(typeof _slpGroupsSync==='function') _slpGroupsSync();
+    const _nc=((window.configs&&configs.groups)||[]).length,
+          _ns=((window.sfields&&sfields.groups)||[]).length;
+    if(_nc||_ns){
+      try{ _slpLogAdd('config','Progetto caricato: '+_nc+' configurazioni ('
+        +((window.configs&&configs.groups)||[]).map(g=>g.label).join(', ')+') e '+_ns+' sottocampi ('
+        +((window.sfields&&sfields.groups)||[]).map(g=>g.label).join(', ')+') ripristinati'); }catch(_){}
+      try{ if(typeof setAl==='function') setAl('saveAl','ok','\u2705 Progetto caricato \u00B7 '+_nc
+        +' configurazioni e '+_ns+' sottocampi ripristinati'); }catch(_){}
+    }
+  }catch(_){}
 
   // Restore pvData — v6.19-r5: respect current pvSimMode (don't show PVGIS
   // Simplified results when user is in 8760h mode, avoids panel duplication)
@@ -17407,7 +17451,7 @@ function dlKML(){
     return'<Placemark><name>'+cab.label+'</name><styleUrl>#cabStyle</styleUrl><Polygon><outerBoundaryIs><LinearRing><coordinates>'+geo.join(' ')+'</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>';
   }).join('\n');
   const styles='<Style id="strStyle"><PolyStyle><color>ff91d42d</color></PolyStyle></Style>\n<Style id="cabStyle"><PolyStyle><color>ffcf6395</color></PolyStyle></Style>';
-  dlBlob('<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n<name>SolarLayout Pro v6.70</name>\n'+styles+'\n'+pms+'\n'+cabPms+'\n</Document></kml>','solar_layout.kml','application/vnd.google-earth.kml+xml');
+  dlBlob('<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n<name>SolarLayout Pro v6.71</name>\n'+styles+'\n'+pms+'\n'+cabPms+'\n</Document></kml>','solar_layout.kml','application/vnd.google-earth.kml+xml');
 }
 
 function dlDXF(){
@@ -17785,7 +17829,7 @@ function dlDXF(){
   const invNote=r.elec?('Inverter: '+r.elec.nInv+'×'+r.elec.invACkW+'kW AC — DC/AC: '+r.elec.dcac_ratio.toFixed(2)):'';
   const cableNote=r.elec&&r.elec.summary.length?r.elec.summary.map(s=>s.descr.replace('Cavo ','')+(': '+(s.m_spare/1000).toFixed(2)+'km +spare')).join(' | '):'';
   const noteLines=[
-    'SolarLayout Pro v6.70 — EPSG:'+epsg+' (UTM zona '+utmZone+')',
+    'SolarLayout Pro v6.71 — EPSG:'+epsg+' (UTM zona '+utmZone+')',
     isTrackerDXF?('Tracker: '+r.structures.filter(s=>!s.half).length+' interi + '+r.structures.filter(s=>s.half).length+' parziali'):
       ('Strutture: '+r.structures.length+' | Pitch N-S: '+(r.pitch*100).toFixed(0)+'cm'),
     isTrackerDXF?('Pitch E-O: '+(r.pitch*100).toFixed(0)+'cm | GCR: '+(r.GCR*100).toFixed(1)+'%'):
@@ -20718,7 +20762,7 @@ function saExportXLSX(){
 
   // ── Foglio 1: Parametri input ──────────────────────────────────────
   const inp=[
-    ['ANALISI PRODUZIONE SITO — SolarLayout Pro v6.70'],
+    ['ANALISI PRODUZIONE SITO — SolarLayout Pro v6.71'],
     ['Generato il', new Date().toLocaleString('it-IT')],
     [],
     ['SITO'],
@@ -20960,7 +21004,7 @@ async function saExportPDF(){
     @media print{body{padding:10mm 8mm}button{display:none}}
   </style>
   </head><body>
-  <h1>☀️ Analisi Produzione Sito — SolarLayout Pro v6.70</h1>
+  <h1>☀️ Analisi Produzione Sito — SolarLayout Pro v6.71</h1>
   <div class="kpis">
     <div class="kpi"><div class="v">${f(pv.lat,3)}°N</div><div class="l">Latitudine</div></div>
     <div class="kpi"><div class="v">${f(pv.lon,3)}°E</div><div class="l">Longitudine</div></div>
@@ -21000,7 +21044,7 @@ async function saExportPDF(){
     · <b>${f(best.annualMWh,0)} MWh/anno</b> · PR ${f(best.PR,1)}%
   </div>`:''}
   <div class="footer">
-    Generato da SolarLayout Pro v6.70 il ${new Date().toLocaleString('it-IT')} ·
+    Generato da SolarLayout Pro v6.71 il ${new Date().toLocaleString('it-IT')} ·
     Dati meteo: PVGIS © Commissione Europea ·
     Shading model: lineare 0-4% pitch_60°→pitch_auto, parabolico sotto pitch_60°
   </div>
@@ -21070,7 +21114,7 @@ async function _saDownloadHTMLReport(){
   }).join('');
 
   const htmlDl=`<!DOCTYPE html><html><head><meta charset="UTF-8">
-  <title>Preanalisi Produzione Sito — SolarLayout Pro v6.70</title>
+  <title>Preanalisi Produzione Sito — SolarLayout Pro v6.71</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Segoe UI',Arial,sans-serif;font-size:9pt;color:#1a2332;padding:18mm 14mm}
@@ -21090,7 +21134,7 @@ async function _saDownloadHTMLReport(){
     .footer{margin-top:12px;font-size:7pt;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:5px}
     @media print{body{padding:10mm 8mm}}
   </style></head><body>
-  <h1>☀️ Preanalisi Produzione Sito — SolarLayout Pro v6.70</h1>
+  <h1>☀️ Preanalisi Produzione Sito — SolarLayout Pro v6.71</h1>
   <div class="kpis">
     <div class="kpi"><div class="v">${f2(pv2.lat,3)}°N</div><div class="l">Latitudine</div></div>
     <div class="kpi"><div class="v">${f2(pv2.lon,3)}°E</div><div class="l">Longitudine</div></div>
@@ -21106,7 +21150,7 @@ async function _saDownloadHTMLReport(){
     <th>MWh/a</th><th>kWh/kWp</th><th>PR%</th><th>Shad%</th>
   </tr></thead><tbody>${rows2}</tbody></table>
   <div class="footer">
-    Generato da SolarLayout Pro v6.70 il ${new Date().toLocaleString('it-IT')} ·
+    Generato da SolarLayout Pro v6.71 il ${new Date().toLocaleString('it-IT')} ·
     PVGIS © Commissione Europea · Packing eff. 0.88 · GCR limiti: fisso ≤0.60, Trk1P ≤0.55, Trk2P ≤0.50
   </div>
   <script>window.onload=()=>window.print();<\/script>
@@ -21123,7 +21167,7 @@ async function _saDownloadHTMLReport(){
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  PDF DATASHEET READER — SolarLayout Pro v6.70  (rewrite v2)
+//  PDF DATASHEET READER — SolarLayout Pro v6.71  (rewrite v2)
 //  Legge datasheet PDF di moduli FV, inverter e trasformatori.
 //  Flusso: PDF.js (estrazione testo) → smart table-parser + regex multi-lingua
 //          → opzionale Claude API per OCR/parsing avanzato
