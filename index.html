@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<!-- v6.81: IMPORT DEI DATI ORARI PVGIS ANCHE IN CSV. Finche' il firewall del JRC blocca gli IP datacenter, la strada praticabile resta lo scarico dal browser dell'utente, ma dalla pagina del tool PVGIS il formato che si ottiene piu' facilmente e' il CSV, mentre l'import accettava solo JSON: i file venivano scartati in silenzio dal watcher della cartella, che filtrava per estensione e poi falliva comunque sulla JSON.parse. Aggiunto un parser che normalizza il CSV orario nella stessa struttura del JSON di seriescalc, leggendo l'intestazione delle colonne e ricavando dai metadati latitudine, longitudine, database di radiazione, inclinazione e azimut, cosi' la validazione esistente su anno, coordinate, dataset e orientamento continua a funzionare senza modifiche, e con essa la cache IndexedDB e la simulazione oraria. Il watcher accetta ora sia json sia csv e il riconoscimento del formato avviene sul contenuto, non sull'estensione. -->
 <!-- v6.80: RIEMPIMENTO SOLIDO DXF MANCANTE SUI SOTTOCAMPI OLTRE IL PRIMO. Nel DXF le strutture vengono riempite con un solido colorato sul layer dell'inverter che le serve, e l'associazione viene letta da elec._stToInvMap. Il merge del calcolo misto fondeva inverters, cableDC, cableAC e cableMT ma non quella mappa, che quindi restava quella del PRIMO gruppo: le strutture di tutti gli altri gruppi non trovavano il proprio inverter e uscivano senza riempimento, con il solo contorno. Da qui la resa grafica diversa fra un campo e l'altro aprendo il DXF in CAD, evidente sul progetto a tre sottocampi. Ora la mappa viene fusa con gli stessi scostamenti gia' usati per gli altri array elettrici, indice struttura piu' il numero di strutture dei gruppi precedenti e indice inverter piu' il numero di inverter dei gruppi precedenti. Aggiunta anche una diagnostica in esportazione che conta e segnala nel log quante strutture restano senza associazione inverter, cosi' una mappa incompleta si vede subito invece di manifestarsi come un campo disegnato a meta'. -->
 <!-- v6.79: RAME DC QUASI DIMEZZATO SCEGLIENDO L'ASSE DELLE ZONE INVERTER. L'ordine delle strutture determina la forma della zona servita da un inverter: una zona di N strutture consecutive e' lunga N per il passo lungo l'asse percorso, e la lunghezza media dei cavi DC ne discende direttamente. Nel fisso l'ordine era per righe, cioe' lungo l'asse Est Ovest, dove il passo e' la larghezza della struttura, tipicamente 18,5 m; il passo fra le file in direzione Nord Sud e' circa la meta', 9,5 m. Ordinando a colonne la stessa zona diventa lunga la meta' e le tratte DC si accorciano in proporzione. La scelta ora e' automatica e geometrica: si percorre l'asse a passo minore fra larghezza struttura e passo fra file, con l'esito scritto nel log diagnostico. Misurato sulle strutture reali del progetto di prova: span mediano per inverter da 204 a 87 m, massimo da 726 a 644 m, rame DC stimato da 1654 a 836 km. Sul tracker l'ordine resta quello storico, gia' validato con l'ancoraggio stringhe a riporto modulare, perche' li' la geometria della struttura e' invertita. -->
 <!-- v6.78: CAVO DI CONNESSIONE DIMENSIONATO PER SOTTOCAMPO. Dal collaudo del progetto con tre sottocampi: le righe di connessione ricostruite per sottocampo ereditavano sezione e numero di cavi in parallelo dal template globale, dimensionato sulla potenza dell'INTERO impianto. Con S-1 da 32 MW, S-2 da 65,7 MW e S-3 da 10,6 MW tutti e tre si portavano dietro due cavi da 630 mm quadri, quindi il piccolo largamente sovradimensionato in riepilogo, MTO, corrugati e scavi. Ora calcMTcable accetta potenza e distanza in override e viene richiamata per ogni sottocampo con la sua Pn e la sua distanza di consegna: sezione, numero di paralleli, descrizione e lunghezza netta della tratta MT seguono la potenza reale del sottocampo, e il risultato finisce anche nel log diagnostico. Senza override il comportamento della funzione e' invariato, quindi il percorso senza sottocampi non cambia. La tratta AT resta sul template globale: a 132 kV la corrente e' bassa e la sezione minima di catalogo domina comunque il dimensionamento. -->
@@ -68,8 +69,8 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<meta name="build-version" content="v6.80">
-<title>SolarLayout Pro v6.80 (PROVA — accesso aperto)</title>
+<meta name="build-version" content="v6.81">
+<title>SolarLayout Pro v6.81 (PROVA — accesso aperto)</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;900&family=JetBrains+Mono:wght@400;600&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -525,7 +526,7 @@ document.addEventListener('DOMContentLoaded',function(){
 </script>
 
 <div class="hdr">
-  <div class="logo">⚡ SolarLayout<em>GROUND-MOUNT PV CALCULATOR v6.80</em></div>
+  <div class="logo">⚡ SolarLayout<em>GROUND-MOUNT PV CALCULATOR v6.81</em></div>
   <button id="themeToggle" onclick="toggleTheme()">🌙 Notte</button>
   <button id="authLogoutBtn" onclick="if(window.netlifyIdentity)netlifyIdentity.logout();" title="Esci dall'account" style="margin-left:6px">🚪 Esci</button>
   <div class="chips">
@@ -9709,6 +9710,54 @@ async function pvgisNetTest(){
 // per costruzione: è l'utente stesso che scarica, come da browser normale.
 
 // Logica pura di validazione/ingest di un JSON PVGIS (testabile senza DOM).
+// v6.81: il tool web PVGIS scarica i dati orari in CSV oltre che in JSON, e
+// il CSV e' quello che l'utente ottiene piu' facilmente dalla pagina del JRC.
+// Qui il CSV viene normalizzato nella STESSA struttura del JSON di seriescalc,
+// cosi' validazione, cache IndexedDB e simulazione 8760h non cambiano di una
+// riga. Formato atteso: righe di intestazione con metadati, poi la riga
+// "time,P,G(i),H_sun,T2m,WS10m,Int" e i record 20200101:0010,...
+function _slpPvgisCsvToJson(text){
+  try{
+    const L=String(text||'').split(/\r?\n/);
+    const hi=L.findIndex(l=>/^\s*time\s*,/i.test(l));
+    if(hi<0) return null;
+    const cols=L[hi].split(',').map(c=>c.trim());
+    const hourly=[];
+    for(let i=hi+1;i<L.length;i++){
+      const line=L[i].trim();
+      if(!line) break;                       // riga vuota = fine dei record
+      if(!/^\d{8}:\d{4}/.test(line)) break;  // inizio del footer descrittivo
+      const p=line.split(',');
+      if(p.length<2) break;
+      const rec={};
+      for(let c=0;c<cols.length && c<p.length;c++){
+        const k=cols[c], v=p[c].trim();
+        rec[k]=(k.toLowerCase()==='time')?v:(v===''?null:parseFloat(v));
+      }
+      if(rec.time) hourly.push(rec);
+    }
+    if(hourly.length<100) return null;
+    const num=(re)=>{ const m=re.exec(text); return m?parseFloat(m[1]):undefined; };
+    const lat=num(/Latitude[^\n:]*:\s*\t?\s*(-?\d+(?:\.\d+)?)/i);
+    const lon=num(/Longitude[^\n:]*:\s*\t?\s*(-?\d+(?:\.\d+)?)/i);
+    const slope=num(/Slope[^\n:]*:\s*\t?\s*(-?\d+(?:\.\d+)?)/i);
+    const azim=num(/Azimuth[^\n:]*:\s*\t?\s*(-?\d+(?:\.\d+)?)/i);
+    const mdb=/Radiation database[^\n:]*:\s*\t?\s*([^\r\n\t]+)/i.exec(text);
+    const out={inputs:{}, outputs:{hourly:hourly}, _fromCsv:true};
+    if(isFinite(lat)&&isFinite(lon)) out.inputs.location={latitude:lat, longitude:lon};
+    if(mdb) out.inputs.meteo_data={radiation_db:String(mdb[1]).trim()};
+    if(isFinite(slope)) out.inputs.mounting_system={fixed:{slope:{value:slope},
+      azimuth:{value:isFinite(azim)?azim:0}}};
+    return out;
+  }catch(_){ return null; }
+}
+// Accetta indifferentemente testo (JSON o CSV) oppure un oggetto gia' parsato.
+function _slpParsePvgisFile(txt){
+  if(txt && typeof txt==='object') return txt;
+  const t=String(txt||'');
+  try{ const j=JSON.parse(t); if(j&&j.outputs) return j; }catch(_){}
+  return _slpPvgisCsvToJson(t);
+}
 function _slpImportOneJson(j, dataset){
   try{
     if(!j || !j.outputs || !Array.isArray(j.outputs.hourly) || !j.outputs.hourly.length){
@@ -9822,14 +9871,15 @@ window.slpBrowAutoImport = async function(){
   while(window._slpBrowWatch && (Date.now()-t0) < 180000){
     try{
       for await (const entry of dir.values()){
-        if(entry.kind !== 'file' || !/\.json$/i.test(entry.name)) continue;
+        if(entry.kind !== 'file' || !/\.(json|csv)$/i.test(entry.name)) continue;   // v6.81: anche CSV
         const f = await entry.getFile();
         const key = entry.name+'|'+f.size+'|'+f.lastModified;
         if(seen.has(key)) continue;
         seen.add(key);
         if(f.lastModified < t0 - 120000) continue;   // solo file recenti
         let j = null;
-        try{ j = JSON.parse(await f.text()); }catch(_){ continue; }
+        try{ j = _slpParsePvgisFile(await f.text()); }catch(_){ j = null; }   // v6.81: JSON o CSV
+        if(!j) continue;
         const r = _slpImportOneJson(j, dataset);
         if(r.ok && !okY.has(r.year)){
           _pvgisIdb.put(_pvgisIdbKey(dataset, r.year), j);
@@ -14075,7 +14125,7 @@ function dlExcel8760(){
   mRows.push(mt);
   const ws2=XLSX.utils.aoa_to_sheet(mRows);
   ws2['!cols']=mHdr.map(h=>({wch:Math.max(h.length+2,13)}));
-  const cfgRows=[['Parametro','Valore'],['Potenza (kWp)',+cfg.kWp.toFixed(3)],['Latitudine',+cfg.lat.toFixed(5)],['Longitudine',+cfg.lon.toFixed(5)],['Tipo montaggio',isT?'SAT N-S orizzontale':'Fisso'],[isT?'Tilt max tracker (deg)':'Tilt (deg)',isT?cfg.maxTiltDeg:cfg.tiltDeg],[isT?'Azimut asse (deg)':'Azimut (deg)',isT?cfg.axisAzDeg:cfg.azDeg],['Pitch (m)',+cfg.pitch.toFixed(2)],['GCR',+cfg.gcr.toFixed(3)],['Bifacciale',cfg.bifacial?'Si':'No'],['Fattore bifacciale (%)',cfg.bifFactor||0],['NOCT (C)',cfg.noct||45],['Gamma temp (%/C)',cfg.gamma||0.4],[],['--- PERDITE ---','%'],['Soiling',cfg.losses.soiling||0],['Mismatch',cfg.losses.mismatch||0],['LID',cfg.losses.lid||0],['Cavi DC',cfg.losses.caviDC||0],['Inverter eff.',cfg.losses.invEff||0],['MPPT',cfg.losses.mppt||0],['Inv. consumo proprio',cfg.losses.invSelf||0],['Cavi AC',cfg.losses.caviAC||0],['Trafo Fe',cfg.losses.trafoFe||0],['Trafo Cu',cfg.losses.trafoCu||0],['Cavi MT',cfg.losses.caviMT||0],['Downtime',cfg.losses.downtime||0],[],['--- KPI ANNUALI ---',''],['E lordo (MWh)',+(ann.E_gross/1000).toFixed(3)],['E netto (MWh)',+(ann.E_net/1000).toFixed(3)],['Yield specifico (kWh/kWp)',+ann.yield_net.toFixed(0)],['PR (IEC 61724-1) (%)',+ann.PR_conv.toFixed(2)],['PR bifacciale (%)',+ann.PR_bif.toFixed(2)],['Perdita ombreggiamento (%)',+ann.shadeLoss.toFixed(3)],['Perdita orizzonte DTM (%)',typeof window._horizonLossPct!=='undefined'?+window._horizonLossPct.toFixed(3):0],['Guadagno bifacciale (%)',+ann.bifGain.toFixed(2)],[],['Ore diurne esportate',r.hourlyRows.length+' (ore notturne, produzione 0, omesse)'],['Generato il',new Date().toLocaleString('it-IT')],['Software','SolarLayout Pro v6.80'],['Fonte meteo', (function(){
+  const cfgRows=[['Parametro','Valore'],['Potenza (kWp)',+cfg.kWp.toFixed(3)],['Latitudine',+cfg.lat.toFixed(5)],['Longitudine',+cfg.lon.toFixed(5)],['Tipo montaggio',isT?'SAT N-S orizzontale':'Fisso'],[isT?'Tilt max tracker (deg)':'Tilt (deg)',isT?cfg.maxTiltDeg:cfg.tiltDeg],[isT?'Azimut asse (deg)':'Azimut (deg)',isT?cfg.axisAzDeg:cfg.azDeg],['Pitch (m)',+cfg.pitch.toFixed(2)],['GCR',+cfg.gcr.toFixed(3)],['Bifacciale',cfg.bifacial?'Si':'No'],['Fattore bifacciale (%)',cfg.bifFactor||0],['NOCT (C)',cfg.noct||45],['Gamma temp (%/C)',cfg.gamma||0.4],[],['--- PERDITE ---','%'],['Soiling',cfg.losses.soiling||0],['Mismatch',cfg.losses.mismatch||0],['LID',cfg.losses.lid||0],['Cavi DC',cfg.losses.caviDC||0],['Inverter eff.',cfg.losses.invEff||0],['MPPT',cfg.losses.mppt||0],['Inv. consumo proprio',cfg.losses.invSelf||0],['Cavi AC',cfg.losses.caviAC||0],['Trafo Fe',cfg.losses.trafoFe||0],['Trafo Cu',cfg.losses.trafoCu||0],['Cavi MT',cfg.losses.caviMT||0],['Downtime',cfg.losses.downtime||0],[],['--- KPI ANNUALI ---',''],['E lordo (MWh)',+(ann.E_gross/1000).toFixed(3)],['E netto (MWh)',+(ann.E_net/1000).toFixed(3)],['Yield specifico (kWh/kWp)',+ann.yield_net.toFixed(0)],['PR (IEC 61724-1) (%)',+ann.PR_conv.toFixed(2)],['PR bifacciale (%)',+ann.PR_bif.toFixed(2)],['Perdita ombreggiamento (%)',+ann.shadeLoss.toFixed(3)],['Perdita orizzonte DTM (%)',typeof window._horizonLossPct!=='undefined'?+window._horizonLossPct.toFixed(3):0],['Guadagno bifacciale (%)',+ann.bifGain.toFixed(2)],[],['Ore diurne esportate',r.hourlyRows.length+' (ore notturne, produzione 0, omesse)'],['Generato il',new Date().toLocaleString('it-IT')],['Software','SolarLayout Pro v6.81'],['Fonte meteo', (function(){
     const ds = (typeof document!=='undefined' && document.getElementById('pvSimDataset'))
       ? document.getElementById('pvSimDataset').value : 'SARAH2_MULTI';
     if(typeof _multiYearStats !== 'undefined' && _multiYearStats){
@@ -14319,7 +14369,7 @@ tfoot td{background:#e6f9ee;font-weight:700;color:#065f46;border-top:2px solid #
 <div class="note">
   Fonte dati: PVGIS © Commissione Europea — Joint Research Centre (re.jrc.ec.europa.eu/pvg_tools)<br>
   Database meteorologico: ERA5 / SARAH-2 | Anno meteorologico tipico (TMY) | Tecnologia: Si cristallino, installazione free-standing<br>
-  Generato da SolarLayout Pro v6.80 il ${new Date().toLocaleString('it-IT')} | Questo report è a scopo indicativo — per uso autorizzativo verificare con specialista abilitato.
+  Generato da SolarLayout Pro v6.81 il ${new Date().toLocaleString('it-IT')} | Questo report è a scopo indicativo — per uso autorizzativo verificare con specialista abilitato.
 </div>
 <script>
   // Print after a short delay to ensure full render
@@ -14372,7 +14422,7 @@ function dlPVGISWord(){
   '<table><thead><tr><th>Mese</th><th>E_d (kWh/d)</th><th>E_m (kWh)</th><th>E_m (MWh)</th><th>H_d (kWh/m²/d)</th></tr></thead>'+
   '<tbody>'+rows+'</tbody>'+
   '<tfoot><tr class="tot"><td>TOTALE</td><td>'+d.Ed.toFixed(2)+'</td><td>'+totEm.toFixed(0)+'</td><td>'+(totEm/1000).toFixed(3)+'</td><td>—</td></tr></tfoot></table>'+
-  '<p style="font-size:9pt;color:#888;margin-top:20pt">PVGIS © Commissione Europea — ERA5/SARAH2. Generato da SolarLayout Pro v6.80.</p>'+
+  '<p style="font-size:9pt;color:#888;margin-top:20pt">PVGIS © Commissione Europea — ERA5/SARAH2. Generato da SolarLayout Pro v6.81.</p>'+
   '</body></html>';
   dlBlob(html,'report_producibilita_pvgis.doc','application/msword;charset=utf-8');
 }
@@ -14838,7 +14888,7 @@ ${el.dcWarnMsg?`<div style="background:#fee2e2;border:1px solid #f87171;border-r
     :'<p style="color:#888;font-size:.82rem">Render 3D non ancora generati — usa lo Step 5 per generarli prima di stampare il report.</p>';
 
   const html=`<!DOCTYPE html><html lang="it"><head><meta charset="utf-8">
-<title>SolarLayout Pro v6.80 — Report Tecnico</title>
+<title>SolarLayout Pro v6.81 — Report Tecnico</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Segoe UI',Arial,sans-serif;font-size:11.5px;color:#1a1a1a;padding:20px;max-width:960px;margin:0 auto}
@@ -15392,7 +15442,7 @@ ${(function(){
 <h2>🖼 Rendering 3D Impianto</h2>
 ${renderHtml}
 
-<footer>SolarLayout Pro v6.80 · Calcolo layout impianti FV ground-mount · Elaborazione automatica — verificare sempre con progettista qualificato · Norme: CEI 0-16, CEI 64-8, CEI 82-25, CEI EN 62446</footer>
+<footer>SolarLayout Pro v6.81 · Calcolo layout impianti FV ground-mount · Elaborazione automatica — verificare sempre con progettista qualificato · Norme: CEI 0-16, CEI 64-8, CEI 82-25, CEI EN 62446</footer>
 <div class="noprint" style="text-align:center;margin:20px"><button onclick="window.print()" style="padding:12px 30px;background:#1d4ed8;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer">📄 Salva come PDF (Ctrl+P)</button></div>
 <script>
 document.addEventListener("DOMContentLoaded",function(){
@@ -16991,7 +17041,7 @@ async function dlCatastoDXF(){
     // TABELLA
     let tx=eMax+30,ty=nMax;const RH=5;
     dxf+=textEntity({e:tx,n:ty},'INQUADRAMENTO CATASTALE','TABELLA',4,7);ty-=RH*1.5;
-    dxf+=textEntity({e:tx,n:ty},'SolarLayout Pro v6.80','TABELLA',2,7);ty-=RH;
+    dxf+=textEntity({e:tx,n:ty},'SolarLayout Pro v6.81','TABELLA',2,7);ty-=RH;
     catastoData.forEach((p,ii)=>{
       dxf+=textEntity({e:tx,n:ty},(ii+1)+'. '+(p.comune||'')+' Fg.'+p.foglio+' M.'+p.particella+(p.area_tot_mq>0?' '+Math.round(p.area_tot_mq)+'m2':''),'TABELLA',2,7);ty-=RH;
     });
@@ -17114,7 +17164,7 @@ function cmpBuildDXF(rasterGrid){
   }
   // ── Table ──
   const MG=Math.max((X1-X0)*0.08,50);let tx=X1+MG,ty=Y1;const RH=4.8;
-  d+=TXT(tx,ty,'SolarLayout Pro v6.80 — Catasto',3.6,'TABELLA');ty-=RH;
+  d+=TXT(tx,ty,'SolarLayout Pro v6.81 — Catasto',3.6,'TABELLA');ty-=RH;
   d+=TXT(tx,ty,new Date().toLocaleDateString('it-IT')+'  EPSG:'+(32600+utmZone)+' UTM',1.5,'TABELLA');ty-=RH*0.9;
   catastoData.forEach((p,ii)=>{
     d+=TXT(tx,ty,(ii+1)+'. Fg'+p.foglio+' Mapp'+p.particella+' '+(p.comune||''),1.7,'TABELLA');ty-=RH;
@@ -17134,7 +17184,7 @@ async function dlCatastoPDF(){
     const bg=()=>{doc.setFillColor(8,14,20);doc.rect(0,0,PW,PH,'F');};
     bg();
     doc.setFontSize(18);doc.setTextColor(245,158,11);
-    doc.text('Inquadramento Catastale — SolarLayout Pro v6.80',15,16);
+    doc.text('Inquadramento Catastale — SolarLayout Pro v6.81',15,16);
     doc.setFontSize(8);doc.setTextColor(155,190,215);
     const totArea=catastoData.reduce((s,p)=>s+(p.area_tot_mq||0),0);
     const impArea=catastoData.reduce((s,p)=>s+(p.area_imp_mq||0),0);
@@ -17757,7 +17807,7 @@ function dlKML(){
     return'<Placemark><name>'+cab.label+'</name><styleUrl>#cabStyle</styleUrl><Polygon><outerBoundaryIs><LinearRing><coordinates>'+geo.join(' ')+'</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>';
   }).join('\n');
   const styles='<Style id="strStyle"><PolyStyle><color>ff91d42d</color></PolyStyle></Style>\n<Style id="cabStyle"><PolyStyle><color>ffcf6395</color></PolyStyle></Style>';
-  dlBlob('<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n<name>SolarLayout Pro v6.80</name>\n'+styles+'\n'+pms+'\n'+cabPms+'\n</Document></kml>','solar_layout.kml','application/vnd.google-earth.kml+xml');
+  dlBlob('<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n<name>SolarLayout Pro v6.81</name>\n'+styles+'\n'+pms+'\n'+cabPms+'\n</Document></kml>','solar_layout.kml','application/vnd.google-earth.kml+xml');
 }
 
 function dlDXF(){
@@ -18141,7 +18191,7 @@ function dlDXF(){
   const invNote=r.elec?('Inverter: '+r.elec.nInv+'×'+r.elec.invACkW+'kW AC — DC/AC: '+r.elec.dcac_ratio.toFixed(2)):'';
   const cableNote=r.elec&&r.elec.summary.length?r.elec.summary.map(s=>s.descr.replace('Cavo ','')+(': '+(s.m_spare/1000).toFixed(2)+'km +spare')).join(' | '):'';
   const noteLines=[
-    'SolarLayout Pro v6.80 — EPSG:'+epsg+' (UTM zona '+utmZone+')',
+    'SolarLayout Pro v6.81 — EPSG:'+epsg+' (UTM zona '+utmZone+')',
     isTrackerDXF?('Tracker: '+r.structures.filter(s=>!s.half).length+' interi + '+r.structures.filter(s=>s.half).length+' parziali'):
       ('Strutture: '+r.structures.length+' | Pitch N-S: '+(r.pitch*100).toFixed(0)+'cm'),
     isTrackerDXF?('Pitch E-O: '+(r.pitch*100).toFixed(0)+'cm | GCR: '+(r.GCR*100).toFixed(1)+'%'):
@@ -21077,7 +21127,7 @@ function saExportXLSX(){
 
   // ── Foglio 1: Parametri input ──────────────────────────────────────
   const inp=[
-    ['ANALISI PRODUZIONE SITO — SolarLayout Pro v6.80'],
+    ['ANALISI PRODUZIONE SITO — SolarLayout Pro v6.81'],
     ['Generato il', new Date().toLocaleString('it-IT')],
     [],
     ['SITO'],
@@ -21319,7 +21369,7 @@ async function saExportPDF(){
     @media print{body{padding:10mm 8mm}button{display:none}}
   </style>
   </head><body>
-  <h1>☀️ Analisi Produzione Sito — SolarLayout Pro v6.80</h1>
+  <h1>☀️ Analisi Produzione Sito — SolarLayout Pro v6.81</h1>
   <div class="kpis">
     <div class="kpi"><div class="v">${f(pv.lat,3)}°N</div><div class="l">Latitudine</div></div>
     <div class="kpi"><div class="v">${f(pv.lon,3)}°E</div><div class="l">Longitudine</div></div>
@@ -21359,7 +21409,7 @@ async function saExportPDF(){
     · <b>${f(best.annualMWh,0)} MWh/anno</b> · PR ${f(best.PR,1)}%
   </div>`:''}
   <div class="footer">
-    Generato da SolarLayout Pro v6.80 il ${new Date().toLocaleString('it-IT')} ·
+    Generato da SolarLayout Pro v6.81 il ${new Date().toLocaleString('it-IT')} ·
     Dati meteo: PVGIS © Commissione Europea ·
     Shading model: lineare 0-4% pitch_60°→pitch_auto, parabolico sotto pitch_60°
   </div>
@@ -21429,7 +21479,7 @@ async function _saDownloadHTMLReport(){
   }).join('');
 
   const htmlDl=`<!DOCTYPE html><html><head><meta charset="UTF-8">
-  <title>Preanalisi Produzione Sito — SolarLayout Pro v6.80</title>
+  <title>Preanalisi Produzione Sito — SolarLayout Pro v6.81</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Segoe UI',Arial,sans-serif;font-size:9pt;color:#1a2332;padding:18mm 14mm}
@@ -21449,7 +21499,7 @@ async function _saDownloadHTMLReport(){
     .footer{margin-top:12px;font-size:7pt;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:5px}
     @media print{body{padding:10mm 8mm}}
   </style></head><body>
-  <h1>☀️ Preanalisi Produzione Sito — SolarLayout Pro v6.80</h1>
+  <h1>☀️ Preanalisi Produzione Sito — SolarLayout Pro v6.81</h1>
   <div class="kpis">
     <div class="kpi"><div class="v">${f2(pv2.lat,3)}°N</div><div class="l">Latitudine</div></div>
     <div class="kpi"><div class="v">${f2(pv2.lon,3)}°E</div><div class="l">Longitudine</div></div>
@@ -21465,7 +21515,7 @@ async function _saDownloadHTMLReport(){
     <th>MWh/a</th><th>kWh/kWp</th><th>PR%</th><th>Shad%</th>
   </tr></thead><tbody>${rows2}</tbody></table>
   <div class="footer">
-    Generato da SolarLayout Pro v6.80 il ${new Date().toLocaleString('it-IT')} ·
+    Generato da SolarLayout Pro v6.81 il ${new Date().toLocaleString('it-IT')} ·
     PVGIS © Commissione Europea · Packing eff. 0.88 · GCR limiti: fisso ≤0.60, Trk1P ≤0.55, Trk2P ≤0.50
   </div>
   <script>window.onload=()=>window.print();<\/script>
@@ -21482,7 +21532,7 @@ async function _saDownloadHTMLReport(){
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  PDF DATASHEET READER — SolarLayout Pro v6.80  (rewrite v2)
+//  PDF DATASHEET READER — SolarLayout Pro v6.81  (rewrite v2)
 //  Legge datasheet PDF di moduli FV, inverter e trasformatori.
 //  Flusso: PDF.js (estrazione testo) → smart table-parser + regex multi-lingua
 //          → opzionale Claude API per OCR/parsing avanzato
